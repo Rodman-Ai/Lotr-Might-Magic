@@ -1,5 +1,5 @@
 import {
-  HEROES, ENEMIES, TILES, buildTileCache, getTileCanvas, isWalkable,
+  HEROES, ENEMIES, TILES, buildTileCache, getTileCanvas, getFlameFrame, isWalkable,
 } from "./sprites.js";
 import {
   W, H, SPAWN, buildWorld, encounterTable, findInteractable,
@@ -15,6 +15,31 @@ const VIEW_TX = VIEW_W / TILE, VIEW_TY = VIEW_H / TILE;
 const screen = document.getElementById("screen");
 const ctx = screen.getContext("2d");
 ctx.imageSmoothingEnabled = false;
+
+// Offscreen lighting overlay (same size as the canvas).
+const lightCanvas = document.createElement("canvas");
+lightCanvas.width = VIEW_W; lightCanvas.height = VIEW_H;
+const lightCtx = lightCanvas.getContext("2d");
+
+// Animation-time accumulator (ms since boot).
+let animTime = 0;
+// Player render-position tween (in pixel coords on the world).
+let walk = null; // { fromPx, fromPy, toPx, toPy, start, dur }
+const WALK_DUR = 130;
+
+// Particles: drifting mist flecks (pixel-space, world coordinates).
+const particles = [];
+
+// Title-screen stars cached per-load.
+const titleStars = [];
+
+// Combat fx state.
+const fx = {
+  dmgNumbers: [],   // { x, y, text, color, born, dur }
+  hitFlash: new Map(),  // enemy.instanceId -> until-ms
+  partyFlash: new Map(), // party index -> until-ms
+  shake: { until: 0, mag: 0 },
+};
 
 const overlayEl = document.getElementById("overlay");
 const partyEl = document.getElementById("party");
@@ -68,22 +93,50 @@ function buildParty() {
 
 // ----- Rendering ----------------------------------------------------------
 
+function getPlayerPixel() {
+  const tx = state.player.x * TILE;
+  const ty = state.player.y * TILE;
+  if (!walk) return { px: tx, py: ty, moving: false };
+  const t = Math.min(1, (animTime - walk.start) / walk.dur);
+  if (t >= 1) { walk = null; return { px: tx, py: ty, moving: false }; }
+  const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+  return {
+    px: walk.fromPx + (walk.toPx - walk.fromPx) * ease,
+    py: walk.fromPy + (walk.toPy - walk.fromPy) * ease,
+    moving: true,
+  };
+}
+
 function render() {
   if (state.phase === "title") return renderTitle();
-  // World view.
+
+  const { px: ppx, py: ppy, moving } = getPlayerPixel();
+
+  // Camera centers on the player's interpolated position, clamped to map.
+  const camPx = clamp(ppx + TILE / 2 - VIEW_W / 2, 0, W * TILE - VIEW_W);
+  const camPy = clamp(ppy + TILE / 2 - VIEW_H / 2, 0, H * TILE - VIEW_H);
+
+  // Optional combat shake offset (combat veil shakes too).
+  let shakeX = 0, shakeY = 0;
+  if (animTime < fx.shake.until) {
+    const k = (fx.shake.until - animTime) / 200;
+    shakeX = (Math.random() - 0.5) * fx.shake.mag * k;
+    shakeY = (Math.random() - 0.5) * fx.shake.mag * k;
+  }
+
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  ctx.save();
+  ctx.translate(-camPx + shakeX, -camPy + shakeY);
 
-  const cx = clamp(state.player.x - Math.floor(VIEW_TX / 2), 0, W - VIEW_TX);
-  const cy = clamp(state.player.y - Math.floor(VIEW_TY / 2), 0, H - VIEW_TY);
-
-  // Tiles.
-  for (let ty = 0; ty < VIEW_TY; ty++) {
-    for (let tx = 0; tx < VIEW_TX; tx++) {
-      const wx = cx + tx, wy = cy + ty;
-      if (wx < 0 || wy < 0 || wx >= W || wy >= H) continue;
+  // ----- Tiles -----
+  const tx0 = Math.floor(camPx / TILE);
+  const ty0 = Math.floor(camPy / TILE);
+  const tx1 = Math.min(W - 1, tx0 + VIEW_TX + 1);
+  const ty1 = Math.min(H - 1, ty0 + VIEW_TY + 1);
+  for (let wy = ty0; wy <= ty1; wy++) {
+    for (let wx = tx0; wx <= tx1; wx++) {
       let id = state.grid[wy][wx];
-      // dynamic: shrines lit / chests open
       if (id === TILES.SHRINE) {
         const sh = SHRINES.find(s => s.x === wx && s.y === wy);
         if (sh && state.flags[sh.id]) id = TILES.SHRINE_LIT;
@@ -91,39 +144,147 @@ function render() {
         const c = CHESTS.find(c => c.x === wx && c.y === wy);
         if (c && state.flags["chest_" + c.x + "_" + c.y]) id = TILES.CHEST_OPEN;
       }
-      const img = getTileCanvas(id);
-      if (img) ctx.drawImage(img, tx * TILE, ty * TILE);
+      const img = getTileCanvas(id, animTime);
+      if (img) ctx.drawImage(img, wx * TILE, wy * TILE);
     }
   }
 
-  // Party leader sprite (hero 0).
+  // ----- Brazier flames over shrines -----
+  const flame = getFlameFrame(animTime, 0);
+  if (flame) {
+    for (const s of SHRINES) {
+      if (s.x < tx0 - 1 || s.x > tx1 + 1 || s.y < ty0 - 1 || s.y > ty1 + 1) continue;
+      const lit = !!state.flags[s.id];
+      const f = lit ? getFlameFrame(animTime, s.x * 19) : null;
+      if (f) ctx.drawImage(f, s.x * TILE + 3, s.y * TILE - 8);
+      // Tiny brazier bowl always present.
+      ctx.fillStyle = lit ? "#3a2a1a" : "#1a1820";
+      ctx.fillRect(s.x * TILE + 5, s.y * TILE + 2, 6, 2);
+    }
+  }
+
+  // ----- Mist particles in world space -----
+  ctx.save();
+  for (const p of particles) {
+    const a = (1 - Math.abs(p.t / p.life - 0.5) * 2) * p.alpha;
+    if (a <= 0) continue;
+    ctx.fillStyle = `rgba(220,225,240,${a.toFixed(3)})`;
+    ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+  }
+  ctx.restore();
+
+  // ----- Drop shadow + leader sprite with walk bob -----
+  drawShadow(ppx + 8, ppy + 14, 6, 2);
   const leader = state.party[0];
-  const px = (state.player.x - cx) * TILE;
-  const py = (state.player.y - cy) * TILE;
-  ctx.drawImage(leader.sprite, px, py);
+  let bobY = 0, bobX = 0;
+  if (moving) {
+    const t = (animTime - walk.start) / walk.dur;
+    bobY = -Math.abs(Math.sin(t * Math.PI)) * 1.2;
+    bobX = Math.sin(t * Math.PI * 2) * 0.6;
+  }
+  ctx.drawImage(leader.sprite, Math.round(ppx + bobX), Math.round(ppy + bobY));
 
-  // Pall of shadow over the bridge zone (haunted ambience).
-  ctx.fillStyle = "rgba(20,20,40,0.18)";
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  ctx.restore();
 
-  // Vignette.
+  // ----- Lighting pass: night veil with player + shrine + brazier holes -----
+  drawLighting(camPx - shakeX, camPy - shakeY, ppx, ppy);
+
+  // ----- Vignette (always on) -----
   const grd = ctx.createRadialGradient(
-    VIEW_W / 2, VIEW_H / 2, 60,
-    VIEW_W / 2, VIEW_H / 2, 200);
+    VIEW_W / 2, VIEW_H / 2, 70,
+    VIEW_W / 2, VIEW_H / 2, 220);
   grd.addColorStop(0, "rgba(0,0,0,0)");
   grd.addColorStop(1, "rgba(0,0,0,0.55)");
   ctx.fillStyle = grd;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
   // Combat veil + enemy line over the canvas.
-  if (state.combat) renderCombatVeil();
+  if (state.combat) renderCombatVeil(shakeX, shakeY);
 
   renderHUD();
 }
 
-function renderCombatVeil() {
-  ctx.fillStyle = "rgba(5,5,10,0.7)";
+function drawShadow(cx, cy, rx, ry) {
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawLighting(camPx, camPy, ppx, ppy) {
+  // Night veil with destination-out radial holes around lights.
+  lightCtx.globalCompositeOperation = "source-over";
+  lightCtx.fillStyle = "rgba(8,10,22,0.55)";
+  lightCtx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  lightCtx.globalCompositeOperation = "destination-out";
+  // Player lantern: warm soft light, slight breathing.
+  const breathe = 1 + Math.sin(animTime / 600) * 0.06;
+  const lx = ppx - camPx + 8;
+  const ly = ppy - camPy + 8;
+  punchLight(lx, ly, 56 * breathe, 1.0);
+
+  // Shrine lights when kindled.
+  for (const s of SHRINES) {
+    if (!state.flags[s.id]) continue;
+    const sx = s.x * TILE - camPx + 8;
+    const sy = s.y * TILE - camPy + 4;
+    punchLight(sx, sy, 36, 0.9);
+  }
+
+  // Composite onto the scene as a dim layer.
+  lightCtx.globalCompositeOperation = "source-over";
+  ctx.drawImage(lightCanvas, 0, 0);
+
+  // Additive warm bloom for shrine lights & player lantern.
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const s of SHRINES) {
+    if (!state.flags[s.id]) continue;
+    const sx = s.x * TILE - camPx + 8;
+    const sy = s.y * TILE - camPy + 4;
+    addBloom(sx, sy, 30, "rgba(255,200,110,0.55)");
+  }
+  // Faint lantern bloom on the player.
+  addBloom(ppx - camPx + 8, ppy - camPy + 8, 24, "rgba(255,220,160,0.18)");
+  ctx.restore();
+}
+
+function punchLight(x, y, r, alpha) {
+  const g = lightCtx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, `rgba(0,0,0,${alpha})`);
+  g.addColorStop(0.6, `rgba(0,0,0,${alpha * 0.4})`);
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  lightCtx.fillStyle = g;
+  lightCtx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+function addBloom(x, y, r, color) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, color);
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+function renderCombatVeil(shakeX, shakeY) {
+  ctx.fillStyle = "rgba(5,5,10,0.78)";
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  // Atmospheric mist behind the enemies.
+  ctx.save();
+  const stripeY = 16;
+  for (let i = 0; i < 60; i++) {
+    const t = (animTime / 60 + i * 17) % 360;
+    const x = (t * 1.3) % VIEW_W;
+    const y = stripeY + (i * 7) % 96;
+    ctx.fillStyle = `rgba(120,140,180,${0.04 + (i % 5) * 0.01})`;
+    ctx.fillRect(x, y, 30, 1);
+  }
+  ctx.restore();
+
   // Banner
   ctx.fillStyle = "#1a1f30";
   ctx.fillRect(0, 16, VIEW_W, 96);
@@ -135,54 +296,155 @@ function renderCombatVeil() {
   const slot = VIEW_W / (enemies.length + 1);
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
-    const x = Math.round((i + 1) * slot - 8);
-    const y = e.boss ? 28 : 40;
-    if (e.hp > 0) {
-      ctx.drawImage(e.sprite, x, y);
-      // hp pip
-      const w = 24, h = 2;
-      const px = x - 4, py = y - 4;
-      ctx.fillStyle = "#000"; ctx.fillRect(px, py, w, h);
-      ctx.fillStyle = "#b34a4a";
-      ctx.fillRect(px, py, Math.round(w * (e.hp / e.maxHp)), h);
+    if (e.hp <= 0) continue;
+    const baseX = Math.round((i + 1) * slot - 8) + shakeX;
+    const baseY = (e.boss ? 28 : 40) + shakeY;
+    // Idle bob.
+    const bob = Math.sin(animTime / 320 + i * 1.7) * 1.5;
+    // Drop shadow.
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.beginPath();
+    ctx.ellipse(baseX + 8, baseY + 16, 7, 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    // Sprite (with optional red hit flash).
+    const flashUntil = fx.hitFlash.get(e.instanceId) || 0;
+    if (animTime < flashUntil) {
+      ctx.save();
+      ctx.drawImage(e.sprite, baseX, baseY + bob);
+      ctx.globalCompositeOperation = "source-atop";
+      ctx.fillStyle = "rgba(220,40,40,0.55)";
+      ctx.fillRect(baseX, baseY + bob, 16, 16);
+      ctx.restore();
+    } else {
+      ctx.drawImage(e.sprite, baseX, baseY + bob);
     }
+    // hp pip
+    const w = 24, h = 2;
+    const px = baseX - 4, py = baseY - 4;
+    ctx.fillStyle = "#000"; ctx.fillRect(px, py, w, h);
+    ctx.fillStyle = "#b34a4a";
+    ctx.fillRect(px, py, Math.round(w * (e.hp / e.maxHp)), h);
+  }
+
+  // Floating damage numbers.
+  ctx.save();
+  ctx.font = "bold 10px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  for (const d of fx.dmgNumbers) {
+    const t = (animTime - d.born) / d.dur;
+    if (t >= 1 || t < 0) continue;
+    const a = 1 - t;
+    const yoff = -t * 18;
+    ctx.fillStyle = d.color.replace("ALPHA", a.toFixed(2));
+    ctx.fillText(d.text, d.x, d.y + yoff);
+  }
+  ctx.restore();
+}
+
+function ensureTitleStars() {
+  if (titleStars.length) return;
+  for (let i = 0; i < 80; i++) {
+    titleStars.push({
+      x: Math.random() * VIEW_W,
+      y: Math.random() * 130,
+      a: 0.4 + Math.random() * 0.6,
+      tw: Math.random() * Math.PI * 2,
+      tws: 0.001 + Math.random() * 0.003,
+      par: Math.random() < 0.4 ? 0.3 : 1.0, // some stars on a slow drift layer
+    });
   }
 }
 
 function renderTitle() {
-  ctx.fillStyle = "#04060a";
+  ensureTitleStars();
+  // Sky gradient.
+  const sky = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+  sky.addColorStop(0, "#03050d");
+  sky.addColorStop(0.6, "#0a0e1c");
+  sky.addColorStop(1, "#0c1224");
+  ctx.fillStyle = sky;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
-  // Background tile pattern: distant trees and a faint bridge.
-  for (let i = 0; i < 60; i++) {
-    const x = (i * 37) % VIEW_W;
-    const y = ((i * 17) % 40) + 180;
-    ctx.fillStyle = "#0e1420";
-    ctx.fillRect(x, y, 2, 8);
+  // Twinkling stars (parallax drift).
+  for (const s of titleStars) {
+    const drift = (animTime * 0.005 * s.par) % VIEW_W;
+    const x = (s.x + drift) % VIEW_W;
+    const tw = (Math.sin(animTime * s.tws + s.tw) + 1) / 2;
+    const a = s.a * (0.45 + 0.55 * tw);
+    ctx.fillStyle = `rgba(220,225,240,${a.toFixed(3)})`;
+    ctx.fillRect(Math.floor(x), Math.floor(s.y), 1, 1);
   }
-  // Moon
-  ctx.fillStyle = "#cfd8e4";
-  ctx.beginPath();
-  ctx.arc(60, 60, 16, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#9aa0b8";
-  ctx.beginPath(); ctx.arc(54, 56, 4, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(66, 64, 3, 0, Math.PI * 2); ctx.fill();
 
+  // Mountain silhouette (back layer).
+  ctx.fillStyle = "#0a0d18";
+  drawMountainRange(0, 150, [22, 18, 30, 26, 38, 20, 28, 24, 36, 28, 22, 18, 32]);
+  // Mountain silhouette (front layer, sharper).
+  ctx.fillStyle = "#10142a";
+  drawMountainRange(-12, 168, [16, 28, 22, 38, 30, 24, 36, 28, 22, 30, 26, 18]);
+
+  // Moon with bloom.
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const mg = ctx.createRadialGradient(60, 56, 0, 60, 56, 40);
+  mg.addColorStop(0, "rgba(220,230,255,0.45)");
+  mg.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = mg;
+  ctx.fillRect(20, 16, 80, 80);
+  ctx.restore();
+  ctx.fillStyle = "#cfd8e4";
+  ctx.beginPath(); ctx.arc(60, 56, 14, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#9aa0b8";
+  ctx.beginPath(); ctx.arc(54, 52, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(64, 60, 3, 0, Math.PI * 2); ctx.fill();
+
+  // Faint bridge silhouette in the foreground.
+  ctx.fillStyle = "#1a1424";
+  ctx.fillRect(0, 200, VIEW_W, 40);
+  ctx.fillStyle = "#221a2e";
+  ctx.fillRect(40, 196, VIEW_W - 80, 4);
+  for (let x = 50; x < VIEW_W - 50; x += 14) {
+    ctx.fillRect(x, 196, 1, 8);
+  }
+
+  // Title.
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.8)";
+  ctx.shadowBlur = 4;
   ctx.fillStyle = "#c2a76a";
   ctx.font = "bold 18px ui-monospace, monospace";
   ctx.textAlign = "center";
-  ctx.fillText("SHADOWS OF RIVENDELL", VIEW_W / 2, 110);
+  ctx.fillText("SHADOWS OF RIVENDELL", VIEW_W / 2, 116);
+  ctx.shadowBlur = 0;
   ctx.fillStyle = "#9aa0b8";
   ctx.font = "10px ui-monospace, monospace";
-  ctx.fillText("a pixel-art tale of haunted Imladris", VIEW_W / 2, 126);
+  ctx.fillText("a pixel-art tale of haunted Imladris", VIEW_W / 2, 132);
 
-  ctx.fillStyle = "#d8d2c2";
+  // Pulsing prompt.
+  const pulse = 0.5 + 0.5 * Math.sin(animTime / 380);
+  ctx.fillStyle = `rgba(216,210,194,${(0.5 + pulse * 0.5).toFixed(3)})`;
   ctx.font = "11px ui-monospace, monospace";
-  ctx.fillText("Press ENTER to begin", VIEW_W / 2, 170);
-  ctx.fillStyle = "#7a8898";
+  ctx.fillText("Press ENTER to begin", VIEW_W / 2, 178);
+  ctx.fillStyle = "rgba(122,136,152,0.8)";
   ctx.font = "9px ui-monospace, monospace";
-  ctx.fillText("F9 to load saved game", VIEW_W / 2, 184);
+  ctx.fillText("F9 to load saved game", VIEW_W / 2, 192);
+  ctx.restore();
   ctx.textAlign = "left";
+}
+
+function drawMountainRange(x0, baseY, peaks) {
+  ctx.beginPath();
+  ctx.moveTo(x0, VIEW_H);
+  let x = x0;
+  const step = (VIEW_W - x0 * 2) / (peaks.length - 1);
+  for (let i = 0; i < peaks.length; i++) {
+    ctx.lineTo(x, baseY - peaks[i]);
+    x += step;
+  }
+  ctx.lineTo(VIEW_W, VIEW_H);
+  ctx.closePath();
+  ctx.fill();
 }
 
 // ----- HUD ----------------------------------------------------------------
@@ -259,6 +521,7 @@ const DIRS = {
 function tryMove(dx, dy) {
   if (state.phase !== "explore") return;
   if (state.combat) return;
+  if (walk) return; // ignore inputs mid-tween
   state.player.facing = dx < 0 ? "west" : dx > 0 ? "east" : dy < 0 ? "north" : "south";
   const ox = state.player.x, oy = state.player.y;
   const nx = ox + dx, ny = oy + dy;
@@ -270,6 +533,11 @@ function tryMove(dx, dy) {
     || t === TILES.DOOR || t === TILES.BRIDGE
     || t === TILES.PATH || t === TILES.FLOOR;
   if (!passable) return;
+  walk = {
+    fromPx: ox * TILE, fromPy: oy * TILE,
+    toPx: nx * TILE, toPy: ny * TILE,
+    start: animTime, dur: WALK_DUR,
+  };
   state.player.x = nx; state.player.y = ny;
   state.steps++;
 
@@ -667,16 +935,106 @@ window.addEventListener("keydown", (ev) => {
 
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
+// ----- fx event API (combat.js posts here via state.emitFx) ---------------
+
+function emitFx(kind, payload) {
+  switch (kind) {
+    case "damage_enemy": {
+      const e = payload.enemy;
+      if (!state.combat) return;
+      const idx = state.combat.enemies.indexOf(e);
+      const slot = VIEW_W / (state.combat.enemies.length + 1);
+      const baseX = Math.round((idx + 1) * slot);
+      const baseY = (e.boss ? 24 : 36);
+      fx.dmgNumbers.push({
+        x: baseX, y: baseY, text: String(payload.dmg),
+        color: "rgba(255,200,90,ALPHA)",
+        born: animTime, dur: 700,
+      });
+      fx.hitFlash.set(e.instanceId, animTime + 200);
+      fx.shake.until = animTime + 180;
+      fx.shake.mag = Math.min(4, 1 + payload.dmg / 20);
+      break;
+    }
+    case "damage_party": {
+      const memberIdx = state.party.indexOf(payload.member);
+      if (memberIdx < 0) return;
+      // Damage number rendered over the enemy line area (approximate).
+      const x = 40 + memberIdx * 60;
+      fx.dmgNumbers.push({
+        x, y: 96, text: String(payload.dmg),
+        color: "rgba(255,90,90,ALPHA)",
+        born: animTime, dur: 700,
+      });
+      fx.shake.until = animTime + 180;
+      fx.shake.mag = Math.min(4, 1 + payload.dmg / 20);
+      break;
+    }
+    case "heal": {
+      const x = VIEW_W / 2;
+      fx.dmgNumbers.push({
+        x, y: 80, text: "+" + payload.amt,
+        color: "rgba(120,220,140,ALPHA)",
+        born: animTime, dur: 700,
+      });
+      break;
+    }
+  }
+}
+state.emitFx = emitFx;
+
+// ----- Particle system (mist) ---------------------------------------------
+
+function spawnMist() {
+  if (state.phase !== "explore") return;
+  if (Math.random() > 0.35) return;
+  const camPx = clamp(state.player.x * TILE + TILE / 2 - VIEW_W / 2, 0, W * TILE - VIEW_W);
+  const camPy = clamp(state.player.y * TILE + TILE / 2 - VIEW_H / 2, 0, H * TILE - VIEW_H);
+  // Spawn near the left edge of the view, drifting east.
+  const wx = camPx + Math.random() * 8 - 8;
+  const wy = camPy + Math.random() * VIEW_H;
+  particles.push({
+    x: wx, y: wy,
+    vx: 4 + Math.random() * 6, vy: -1 + Math.random() * 2,
+    size: Math.random() < 0.5 ? 2 : 3,
+    alpha: 0.25 + Math.random() * 0.25,
+    t: 0, life: 3500 + Math.random() * 2500,
+  });
+  if (particles.length > 60) particles.shift();
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.t += dt;
+    p.x += p.vx * dt / 1000;
+    p.y += p.vy * dt / 1000;
+    if (p.t > p.life) particles.splice(i, 1);
+  }
+  // Reap stale damage numbers.
+  fx.dmgNumbers = fx.dmgNumbers.filter(d => animTime - d.born < d.dur);
+  for (const [k, t] of fx.hitFlash) if (t < animTime) fx.hitFlash.delete(k);
+}
+
+// ----- Main loop ----------------------------------------------------------
+
+let lastFrame = 0;
+function frame(now) {
+  if (!lastFrame) lastFrame = now;
+  const dt = Math.min(64, now - lastFrame);
+  lastFrame = now;
+  animTime += dt;
+  spawnMist();
+  updateParticles(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+
 function boot() {
   buildTileCache();
   state.grid = buildWorld();
   state.party = buildParty();
-  // initial render shows title screen
-  render();
-  // Tiny ambient pulse to redraw periodically (keeps any future animation responsive).
-  setInterval(() => {
-    if (state.phase !== "title") render();
-  }, 500);
+  requestAnimationFrame(frame);
 }
 
 boot();

@@ -23,6 +23,7 @@ export const SPELLS = {
                  cast(state, caster, target) {
                    const amt = 18 + caster.lvl * 4 + (state.flags.shrine_vilya ? 8 : 0);
                    heal(target, amt);
+                   state.emitFx?.("heal", { amt });
                    state.log("heal", `${caster.name} weaves Mend on ${target.name} (+${amt} HP).`);
                  } },
   holy_light:  { name: "Holy Light",    mp: 6,  target: "enemy",
@@ -30,6 +31,7 @@ export const SPELLS = {
                    const base = 14 + caster.lvl * 3 + (state.flags.shrine_vilya ? 6 : 0);
                    const dmg = base * (target.weak === "holy" ? 2 : 1);
                    target.hp -= dmg;
+                   state.emitFx?.("damage_enemy", { enemy: target, dmg });
                    state.log("hit", `${caster.name} calls Holy Light — ${target.name} takes ${dmg}.`);
                  } },
   lightning:   { name: "Sky-Sunder",    mp: 8,  target: "enemy",
@@ -37,12 +39,14 @@ export const SPELLS = {
                    const base = 20 + caster.lvl * 3 + (state.flags.shrine_vilya ? 8 : 0);
                    const dmg = base * (target.weak === "lightning" ? 2 : 1);
                    target.hp -= dmg;
+                   state.emitFx?.("damage_enemy", { enemy: target, dmg });
                    state.log("hit", `${caster.name} hurls Sky-Sunder — ${target.name} takes ${dmg}.`);
                  } },
   star_arrow:  { name: "Star Arrow",    mp: 5,  target: "enemy",
                  cast(state, caster, target) {
                    const dmg = 16 + caster.lvl * 3;
                    target.hp -= dmg;
+                   state.emitFx?.("damage_enemy", { enemy: target, dmg });
                    state.log("hit", `${caster.name} looses a Star Arrow — ${target.name} takes ${dmg}.`);
                  } },
 };

@@ -293,21 +293,40 @@ function tileWall() {
   return c;
 }
 
-function tileWater() {
-  const c = document.createElement("canvas");
-  c.width = SPR; c.height = SPR;
-  const ctx = c.getContext("2d");
-  ctx.fillStyle = "#1a2050"; ctx.fillRect(0,0,SPR,SPR);
-  ctx.fillStyle = "#2a3a78";
-  for (let y=2;y<SPR;y+=4){
-    for (let x=0;x<SPR;x+=2){
-      ctx.fillRect((x+y)%SPR, y, 1, 1);
+function tileWaterFrames() {
+  // Four-phase shimmer for the cursed Bruinen.
+  const frames = [];
+  const sparklePhases = [
+    [[2,1,2],[8,5,3],[11,10,2],[4,13,3]],
+    [[3,2,2],[9,6,2],[12,11,2],[5,14,2]],
+    [[4,3,3],[10,7,2],[13,12,2],[6,15,2]],
+    [[5,4,2],[11,8,3],[14,13,2],[7, 1,2]],
+  ];
+  for (let f = 0; f < 4; f++) {
+    const c = document.createElement("canvas");
+    c.width = SPR; c.height = SPR;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#1a2050"; ctx.fillRect(0, 0, SPR, SPR);
+    // diagonal ripple bands shifted per frame
+    ctx.fillStyle = "#2a3a78";
+    for (let y = 0; y < SPR; y++) {
+      for (let x = 0; x < SPR; x++) {
+        if (((x + y + f) % 4) === 0) ctx.fillRect(x, y, 1, 1);
+      }
     }
+    // mid-tone speckles
+    ctx.fillStyle = "#3a4aa0";
+    for (let i = 0; i < 8; i++) {
+      const x = (i * 5 + f * 3) % SPR;
+      const y = (i * 7 + f * 5) % SPR;
+      ctx.fillRect(x, y, 1, 1);
+    }
+    // bright sparkles
+    ctx.fillStyle = "#9aa8e8";
+    for (const [x, y, w] of sparklePhases[f]) ctx.fillRect(x, y, w, 1);
+    frames.push(c);
   }
-  ctx.fillStyle = "#5a6abc";
-  ctx.fillRect(2,1,2,1); ctx.fillRect(8,5,3,1);
-  ctx.fillRect(11,10,2,1); ctx.fillRect(4,13,3,1);
-  return c;
+  return frames;
 }
 
 function tileTree() {
@@ -462,11 +481,15 @@ export const TILES = {
   STATUE: 12, SHRINE_LIT: 13, CHEST_OPEN: 14,
 };
 
+const animatedTiles = {};
+const ANIM_PERIOD_MS = 220;
+
+let flameFrames = null;
+
 export function buildTileCache() {
   tileCache[TILES.GRASS] = tileGrass();
   tileCache[TILES.PATH] = tilePath();
   tileCache[TILES.WALL] = tileWall();
-  tileCache[TILES.WATER] = tileWater();
   tileCache[TILES.TREE] = tileTree();
   tileCache[TILES.FLOOR] = tileFloor();
   tileCache[TILES.DOOR] = tileDoor();
@@ -478,10 +501,71 @@ export function buildTileCache() {
   tileCache[TILES.GRAVE] = tileGrave();
   tileCache[TILES.BRIDGE] = tileBridge();
   tileCache[TILES.STATUE] = tileStatue();
+
+  animatedTiles[TILES.WATER] = tileWaterFrames();
+  // First water frame as fallback for any non-time-aware caller.
+  tileCache[TILES.WATER] = animatedTiles[TILES.WATER][0];
+
+  flameFrames = buildFlameFrames();
   return tileCache;
 }
 
-export function getTileCanvas(id) { return tileCache[id]; }
+export function getTileCanvas(id, time = 0) {
+  const frames = animatedTiles[id];
+  if (frames) return frames[Math.floor(time / ANIM_PERIOD_MS) % frames.length];
+  return tileCache[id];
+}
+
+// ---------- Flame / brazier overlay (drawn over shrines) ----------
+
+function buildFlameFrames() {
+  // Three flame poses, drawn slightly larger than 8x10, on a small canvas
+  // that the renderer can blit centered on top of a shrine.
+  const W2 = 10, H2 = 12;
+  const poses = [
+    {
+      tip: [[5,1]],
+      mid: [[4,2],[5,2],[6,2],[4,3],[5,3],[6,3]],
+      bel: [[3,4],[4,4],[5,4],[6,4],[7,4],[3,5],[4,5],[5,5],[6,5],[7,5],
+            [4,6],[5,6],[6,6]],
+      core: [[5,3],[5,4],[5,5]],
+    },
+    {
+      tip: [[4,1]],
+      mid: [[4,2],[5,2],[3,3],[4,3],[5,3],[6,3]],
+      bel: [[3,4],[4,4],[5,4],[6,4],[7,4],[2,5],[3,5],[4,5],[5,5],[6,5],[7,5],
+            [3,6],[4,6],[5,6],[6,6]],
+      core: [[4,3],[4,4],[4,5]],
+    },
+    {
+      tip: [[6,1]],
+      mid: [[5,2],[6,2],[4,3],[5,3],[6,3],[7,3]],
+      bel: [[3,4],[4,4],[5,4],[6,4],[7,4],[3,5],[4,5],[5,5],[6,5],[7,5],[8,5],
+            [4,6],[5,6],[6,6],[7,6]],
+      core: [[6,3],[6,4],[6,5]],
+    },
+  ];
+  return poses.map(pose => {
+    const c = document.createElement("canvas");
+    c.width = W2; c.height = H2;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#5a2a18";
+    for (const [x, y] of pose.bel) ctx.fillRect(x, y, 1, 1);
+    ctx.fillStyle = "#c8602a";
+    for (const [x, y] of pose.mid) ctx.fillRect(x, y, 1, 1);
+    ctx.fillStyle = "#ffcc55";
+    for (const [x, y] of pose.core) ctx.fillRect(x, y, 1, 1);
+    ctx.fillStyle = "#fff5c2";
+    for (const [x, y] of pose.tip) ctx.fillRect(x, y, 1, 1);
+    return c;
+  });
+}
+
+export function getFlameFrame(time, jitter = 0) {
+  if (!flameFrames) return null;
+  const i = Math.floor((time + jitter) / 120) % flameFrames.length;
+  return flameFrames[i];
+}
 
 // Walkability per tile id.
 export function isWalkable(id) {

@@ -148,6 +148,7 @@ function doAttack(state, actor, target) {
   const blessed = (state.flags.shrine_oath && actor.name === "Aranor") ? 4 : 0;
   let dmg = Math.max(1, Math.floor((actor.atk + blessed) * roll - target.def * 0.5));
   target.hp -= dmg;
+  state.emitFx?.("damage_enemy", { enemy: target, dmg });
   state.log("hit", `${actor.name} strikes ${target.name} for ${dmg}.`);
   if (target.hp <= 0) state.log("sys", `${target.name} dissolves into mist.`);
 }
@@ -164,6 +165,7 @@ function resolveEnemyAction(state, actor, plan) {
   const roll = 0.8 + Math.random() * 0.3;
   let dmg = Math.max(1, Math.floor(actor.atk * roll - target.def * (target.defending ? 1.2 : 0.6)));
   target.hp -= dmg;
+  state.emitFx?.("damage_party", { member: target, dmg });
   if (target.hp <= 0) {
     target.hp = 0;
     target.dead = true;
