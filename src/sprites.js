@@ -57,55 +57,78 @@ function heroSprite(p) {
   });
 }
 
+// Back-facing variant: no facial details; hair fills the head; garment
+// continues across the back without belt accents.
+const heroBackBase = [
+  "................",
+  ".....02220......",
+  "....0222220.....",
+  "....0222220.....",
+  "....0222220.....",
+  "....0222220.....",
+  "....02222220....",
+  "...033333330....",
+  "...033333330....",
+  "...033333330....",
+  "...033333330....",
+  "....033 330.....",
+  "....055 550.....",
+  "....055 550.....",
+  "....050 050.....",
+  "................",
+];
+
+function heroBackSprite(p) {
+  return makeSprite(heroBackBase.map(r => r.replace(/ /g, ".")), {
+    "0": "#0a0a10",
+    "1": p.skin,
+    "2": p.hair,
+    "3": p.garment,
+    "4": p.accent,
+    "5": p.boots,
+  });
+}
+
+function makeHero(p) {
+  return { south: heroSprite(p), north: heroBackSprite(p) };
+}
+
+function defineHero(palette, info) {
+  const sprites = makeHero(palette);
+  return { ...info, sprite: sprites.south, sprites };
+}
+
 export const HEROES = {
-  ranger: {
-    name: "Aranor",
-    title: "the Ranger",
-    sprite: heroSprite({ skin: "#d8b48a", hair: "#3a2418", garment: "#3a4a30", accent: "#7a6440", boots: "#2a1c12" }),
-    base: { hp: 36, mp: 6, atk: 9, def: 5, spd: 7, lvl: 1, xp: 0 },
-    spells: [],
-    classKind: "warrior",
-  },
-  archer: {
-    name: "Lendir",
-    title: "the Sindar Archer",
-    sprite: heroSprite({ skin: "#e2c79a", hair: "#d8c060", garment: "#5a6a78", accent: "#a8b8c8", boots: "#3a2a18" }),
-    base: { hp: 28, mp: 10, atk: 8, def: 4, spd: 9, lvl: 1, xp: 0 },
-    spells: ["star_arrow"],
-    classKind: "archer",
-  },
-  mage: {
-    name: "Mithrael",
-    title: "the Grey Wanderer",
-    sprite: heroSprite({ skin: "#dcc8aa", hair: "#cfcfd6", garment: "#3a3a52", accent: "#9aa0d6", boots: "#1a1a26" }),
-    base: { hp: 22, mp: 24, atk: 5, def: 3, spd: 6, lvl: 1, xp: 0 },
-    spells: ["heal", "holy_light", "lightning"],
-    classKind: "mage",
-  },
-  dwarf: {
-    name: "Gimrek",
-    title: "of Erebor",
-    sprite: heroSprite({ skin: "#d6a878", hair: "#9a3a18", garment: "#4a3a2a", accent: "#a08050", boots: "#2a1810" }),
-    base: { hp: 44, mp: 4, atk: 10, def: 8, spd: 4, lvl: 1, xp: 0 },
-    spells: [],
-    classKind: "warrior",
-  },
-  faelwen: {
-    name: "Faelwen",
-    title: "Lady of the Mirror",
-    sprite: heroSprite({ skin: "#e8d4b0", hair: "#cfcfd6", garment: "#dce4ec", accent: "#b8a878", boots: "#6a6878" }),
-    base: { hp: 26, mp: 28, atk: 4, def: 3, spd: 7, lvl: 1, xp: 0 },
-    spells: ["heal", "holy_light", "holy_word"],
-    classKind: "mage",
-  },
-  beren: {
-    name: "Beren",
-    title: "the Wayward",
-    sprite: heroSprite({ skin: "#d6b888", hair: "#3a2818", garment: "#2a1820", accent: "#7a3a3a", boots: "#1a0a0a" }),
-    base: { hp: 32, mp: 8, atk: 11, def: 4, spd: 10, lvl: 1, xp: 0 },
-    spells: ["shadow_strike"],
-    classKind: "archer",
-  },
+  ranger: defineHero(
+    { skin: "#d8b48a", hair: "#3a2418", garment: "#3a4a30", accent: "#7a6440", boots: "#2a1c12" },
+    { name: "Aranor", title: "the Ranger",
+      base: { hp: 36, mp: 6, atk: 9, def: 5, spd: 7, lvl: 1, xp: 0 },
+      spells: [], classKind: "warrior" }),
+  archer: defineHero(
+    { skin: "#e2c79a", hair: "#d8c060", garment: "#5a6a78", accent: "#a8b8c8", boots: "#3a2a18" },
+    { name: "Lendir", title: "the Sindar Archer",
+      base: { hp: 28, mp: 10, atk: 8, def: 4, spd: 9, lvl: 1, xp: 0 },
+      spells: ["star_arrow"], classKind: "archer" }),
+  mage: defineHero(
+    { skin: "#dcc8aa", hair: "#cfcfd6", garment: "#3a3a52", accent: "#9aa0d6", boots: "#1a1a26" },
+    { name: "Mithrael", title: "the Grey Wanderer",
+      base: { hp: 22, mp: 24, atk: 5, def: 3, spd: 6, lvl: 1, xp: 0 },
+      spells: ["heal", "holy_light", "lightning"], classKind: "mage" }),
+  dwarf: defineHero(
+    { skin: "#d6a878", hair: "#9a3a18", garment: "#4a3a2a", accent: "#a08050", boots: "#2a1810" },
+    { name: "Gimrek", title: "of Erebor",
+      base: { hp: 44, mp: 4, atk: 10, def: 8, spd: 4, lvl: 1, xp: 0 },
+      spells: [], classKind: "warrior" }),
+  faelwen: defineHero(
+    { skin: "#e8d4b0", hair: "#cfcfd6", garment: "#dce4ec", accent: "#b8a878", boots: "#6a6878" },
+    { name: "Faelwen", title: "Lady of the Mirror",
+      base: { hp: 26, mp: 28, atk: 4, def: 3, spd: 7, lvl: 1, xp: 0 },
+      spells: ["heal", "holy_light", "holy_word"], classKind: "mage" }),
+  beren: defineHero(
+    { skin: "#d6b888", hair: "#3a2818", garment: "#2a1820", accent: "#7a3a3a", boots: "#1a0a0a" },
+    { name: "Beren", title: "the Wayward",
+      base: { hp: 32, mp: 8, atk: 11, def: 4, spd: 10, lvl: 1, xp: 0 },
+      spells: ["shadow_strike"], classKind: "archer" }),
 };
 
 // ---------- Enemies ----------
@@ -608,16 +631,34 @@ function tileChestOpen() {
   return c;
 }
 
-function tileFountain() {
-  const c = document.createElement("canvas");
-  c.width = SPR; c.height = SPR;
-  const ctx = c.getContext("2d");
-  ctx.fillStyle = "#3a342a"; ctx.fillRect(0,0,SPR,SPR);
-  ctx.fillStyle = "#7a8898"; ctx.fillRect(2,4,12,10);
-  ctx.fillStyle = "#1a2050"; ctx.fillRect(3,5,10,8);
-  ctx.fillStyle = "#3a4a78"; ctx.fillRect(4,6,8,1);
-  ctx.fillStyle = "#5a6abc"; ctx.fillRect(7,8,2,3);
-  return c;
+function tileFountainFrames() {
+  const frames = [];
+  for (let f = 0; f < 4; f++) {
+    const c = document.createElement("canvas");
+    c.width = SPR; c.height = SPR;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#3a342a"; ctx.fillRect(0,0,SPR,SPR);
+    ctx.fillStyle = "#7a8898"; ctx.fillRect(2,4,12,10);
+    ctx.fillStyle = "#1a2050"; ctx.fillRect(3,5,10,8);
+    ctx.fillStyle = "#3a4a78"; ctx.fillRect(4,6,8,1);
+    // central jet
+    ctx.fillStyle = "#5a6abc";
+    ctx.fillRect(7,8,2,3);
+    // animated splashes — small white pixels move outward
+    ctx.fillStyle = "#cfd8e4";
+    const rim = [
+      [[5,7],[10,7]],
+      [[4,8],[11,8]],
+      [[5,9],[10,9]],
+      [[6,7],[9,7]],
+    ][f];
+    for (const [px, py] of rim) ctx.fillRect(px, py, 1, 1);
+    // a sparkle
+    ctx.fillStyle = "#fff5c2";
+    ctx.fillRect(7 + (f % 2), 6 - (f & 1 ? 0 : 1), 1, 1);
+    frames.push(c);
+  }
+  return frames;
 }
 
 function tileGrave() {
@@ -680,7 +721,8 @@ export function buildTileCache() {
   tileCache[TILES.SHRINE_LIT] = tileShrineLit();
   tileCache[TILES.CHEST] = tileChest();
   tileCache[TILES.CHEST_OPEN] = tileChestOpen();
-  tileCache[TILES.FOUNTAIN] = tileFountain();
+  tileCache[TILES.FOUNTAIN] = tileFountainFrames()[0];
+  animatedTiles[TILES.FOUNTAIN] = tileFountainFrames();
   tileCache[TILES.GRAVE] = tileGrave();
   tileCache[TILES.BRIDGE] = tileBridge();
   tileCache[TILES.STATUE] = tileStatue();

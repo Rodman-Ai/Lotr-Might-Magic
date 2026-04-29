@@ -1,12 +1,13 @@
 import { ENEMIES } from "./sprites.js";
-import { SPELLS, ITEMS } from "./items.js";
+import { SPELLS, ITEMS, STATUSES, effectiveAtk, effectiveDef } from "./items.js";
 
 // Combat is a turn-based overlay. The screen renders the enemy line and
 // the menu in plain DOM (#overlay) for accessibility and to keep the canvas
 // busy with the dungeon view behind a darkened veil.
 
 export function startCombat(state, enemyIds, opts = {}) {
-  const enemies = enemyIds.map((id, i) => spawnEnemy(id, i));
+  const scale = state.difficultyScale || 1;
+  const enemies = enemyIds.map((id, i) => spawnEnemy(id, i, scale));
   state.combat = {
     enemies,
     boss: !!opts.boss,
@@ -22,13 +23,16 @@ export function startCombat(state, enemyIds, opts = {}) {
   state.render();
 }
 
-function spawnEnemy(id, idx) {
+function spawnEnemy(id, idx, scale = 1) {
   const base = ENEMIES[id];
+  const hp = Math.max(1, Math.round(base.hp * scale));
   return {
     ...base,
     instanceId: idx,
-    maxHp: base.hp,
-    hp: base.hp,
+    maxHp: hp,
+    hp,
+    atk: Math.max(1, Math.round(base.atk * scale)),
+    statuses: [],
   };
 }
 
@@ -72,6 +76,8 @@ export function tickResolve(state) {
 
   const next = nextActor(state);
   if (!next) {
+    // End-of-round status tick.
+    tickStatuses(state);
     c.phase = "command";
     if (c.fled) { endCombat(state, "fled"); return true; }
     if (c.enemies.every(e => e.hp <= 0)) { endCombat(state, "win"); return true; }
@@ -146,11 +152,16 @@ function resolvePartyAction(state, actor, plan) {
 function doAttack(state, actor, target) {
   const roll = 0.85 + Math.random() * 0.3;
   const blessed = (state.flags.shrine_oath && actor.name === "Aranor") ? 4 : 0;
-  let dmg = Math.max(1, Math.floor((actor.atk + blessed) * roll - target.def * 0.5));
+  const atk = effectiveAtk(actor) + blessed;
+  let dmg = Math.max(1, Math.floor(atk * roll - target.def * 0.5));
   target.hp -= dmg;
   state.emitFx?.("damage_enemy", { enemy: target, dmg });
+  state.emitFx?.("slash_vfx", { target });
   state.log("hit", `${actor.name} strikes ${target.name} for ${dmg}.`);
-  if (target.hp <= 0) state.log("sys", `${target.name} dissolves into mist.`);
+  if (target.hp <= 0) {
+    state.emitFx?.("dissolve", { target });
+    state.log("sys", `${target.name} dissolves into mist.`);
+  }
 }
 
 function resolveEnemyAction(state, actor, plan) {
@@ -178,7 +189,8 @@ function resolveEnemyAction(state, actor, plan) {
   }
   const target = plan.target;
   const roll = 0.8 + Math.random() * 0.3;
-  let dmg = Math.max(1, Math.floor(actor.atk * roll - target.def * (target.defending ? 1.2 : 0.6)));
+  const def = effectiveDef(target);
+  let dmg = Math.max(1, Math.floor(actor.atk * roll - def * (target.defending ? 1.2 : 0.6)));
   target.hp -= dmg;
   state.emitFx?.("damage_party", { member: target, dmg });
   if (target.hp <= 0) {
@@ -190,11 +202,29 @@ function resolveEnemyAction(state, actor, plan) {
   }
 }
 
+function tickStatuses(state) {
+  const all = [...state.party, ...(state.combat?.enemies || [])];
+  for (const u of all) {
+    if (!u.statuses || !u.statuses.length) continue;
+    for (const s of [...u.statuses]) {
+      const def = STATUSES[s.id];
+      if (def?.onTurn) def.onTurn(state, u);
+      s.turns -= 1;
+    }
+    u.statuses = u.statuses.filter(s => s.turns > 0);
+    if (u.hp <= 0 && !u.dead && state.party.includes(u)) {
+      u.dead = true;
+      state.log("hit", `${u.name} succumbs to poison.`);
+    }
+  }
+}
+
 function endCombat(state, outcome) {
   const c = state.combat;
   if (outcome === "win") {
+    const xpMult = state.xpMult || 1;
     let xp = 0, gold = 0;
-    for (const e of c.enemies) { xp += e.xp; gold += e.gold; }
+    for (const e of c.enemies) { xp += Math.round(e.xp * xpMult); gold += e.gold; }
     const live = state.party.filter(m => !m.dead);
     const each = Math.ceil(xp / Math.max(1, live.length));
     for (const m of live) {
@@ -206,7 +236,7 @@ function endCombat(state, outcome) {
     }
     state.gold += gold;
     state.log("gold", `Victory. ${each} XP each, ${gold} silver.`);
-    if (c.boss) state.flags.boss_defeated = true;
+    if (c.boss && c.enemies.some(e => e.id === "nazgul")) state.flags.boss_defeated = true;
   } else if (outcome === "lose") {
     state.log("hit", "Your party falls. Darkness takes Rivendell.");
     state.flags.game_over = true;

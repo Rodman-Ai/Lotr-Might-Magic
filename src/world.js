@@ -30,9 +30,17 @@ export const SHRINES = [
 ];
 
 export const CHESTS = [
-  { x: 16, y: 13, items: [{ id: "potion", n: 2 }, { id: "lembas", n: 1 }] },
-  { x: 30, y: 21, items: [{ id: "manabrew", n: 2 }, { id: "gold", n: 30 }] },
-  { x: 38, y: 29, items: [{ id: "starflask", n: 1 }, { id: "gold", n: 60 }] },
+  { x: 16, y: 13, items: [
+      { id: "potion", n: 2 }, { id: "lembas", n: 1 },
+      { id: "equip:leather_jerkin", n: 1 } ] },
+  { x: 30, y: 21, items: [
+      { id: "manabrew", n: 2 }, { id: "gold", n: 30 },
+      { id: "equip:elven_longbow", n: 1 }, { id: "equip:silver_dagger", n: 1 },
+      { id: "blessoil", n: 1 } ] },
+  { x: 38, y: 29, items: [
+      { id: "starflask", n: 1 }, { id: "gold", n: 60 },
+      { id: "equip:hallowed_axe", n: 1 }, { id: "antidote", n: 2 },
+      { id: "equip:ring_of_durin", n: 1 } ] },
 ];
 
 export const STATUES = [
@@ -59,6 +67,30 @@ export const FIXED = [
     intro: "A cloaked herald bars the way. \"Turn back, kindler of shrines.\"" },
   { x: 26, y: 36, kind: "boss", enemy: "nazgul",
     intro: "A cold rises from the cavern. The Wraith-Lord of the Bruinen drifts forth." },
+];
+
+// NPCs with simple dialogue / a side quest.
+export const NPCS = [
+  { x: 11, y: 8, id: "hithon",
+    name: "Hithon the Watchman",
+    intro: "[A grizzled elf leans against a broken spear.] \"Stranger! The Lost Lore Stone of Imladris fell into the burial grove when the dead rose. If you find it, return it here. There is reward enough.\"",
+    no_quest_yet: "\"Look in the grove, south of the Hall.\"",
+    has_stone: "\"The Stone! You found it!\" Hithon presses a star-spun robe and 50 silver into your hands. \"Wear it well.\"",
+    after: "\"The Stone glimmers again. May it light your way.\"",
+  },
+];
+
+// Side-quest item placement.
+export const QUEST_ITEMS = [
+  { x: 22, y: 28, id: "lore_stone", name: "Lost Lore Stone",
+    desc: "A pale stone, faintly glowing.",
+    flavor: "You lift the Lore Stone. It hums in your hand." },
+];
+
+// Campfires - safe rest spots, fully restore the party (once per visit).
+export const CAMPFIRES = [
+  { x: 14, y: 13, id: "camp_courtyard" },
+  { x: 16, y: 30, id: "camp_grove" },
 ];
 
 // Recruitable heroes hidden in the world. Interact (E) to recruit.
@@ -229,6 +261,9 @@ export function findInteractable(x, y) {
   for (const s of STATUES) if (s.x === x && s.y === y) return { kind: "statue", ...s };
   for (const c of CHESTS) if (c.x === x && c.y === y) return { kind: "chest", ...c };
   for (const r of RECRUITS) if (r.x === x && r.y === y) return { kind: "recruit", ...r };
+  for (const n of NPCS) if (n.x === x && n.y === y) return { kind: "npc", ...n };
+  for (const q of QUEST_ITEMS) if (q.x === x && q.y === y) return { kind: "questitem", ...q };
+  for (const c of CAMPFIRES) if (c.x === x && c.y === y) return { kind: "campfire", ...c };
   for (const f of FIXED) if (f.x === x && f.y === y) return { ...f };
   return null;
 }
