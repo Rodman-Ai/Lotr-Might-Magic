@@ -3,7 +3,7 @@ import {
 } from "./sprites.js";
 import {
   W, H, SPAWN, buildWorld, encounterTable, findInteractable,
-  SHRINES, CHESTS,
+  SHRINES, CHESTS, RECRUITS,
 } from "./world.js";
 import { ITEMS, SPELLS } from "./items.js";
 import { startCombat, queuePartyActions, tickResolve } from "./combat.js";
@@ -69,26 +69,30 @@ const state = {
 // Expose for debugging.
 window.GAME = state;
 
+const MAX_PARTY = 6;
+
+function buildHero(id) {
+  const h = HEROES[id];
+  if (!h) throw new Error("Unknown hero id: " + id);
+  return {
+    id,
+    name: h.name,
+    title: h.title,
+    sprite: h.sprite,
+    classKind: h.classKind,
+    spells: [...h.spells],
+    lvl: h.base.lvl,
+    xp: h.base.xp,
+    maxHp: h.base.hp, hp: h.base.hp,
+    maxMp: h.base.mp, mp: h.base.mp,
+    atk: h.base.atk, def: h.base.def, spd: h.base.spd,
+    dead: false,
+    defending: false,
+  };
+}
+
 function buildParty() {
-  const ids = ["ranger", "archer", "mage", "dwarf"];
-  return ids.map(id => {
-    const h = HEROES[id];
-    return {
-      id,
-      name: h.name,
-      title: h.title,
-      sprite: h.sprite,
-      classKind: h.classKind,
-      spells: [...h.spells],
-      lvl: h.base.lvl,
-      xp: h.base.xp,
-      maxHp: h.base.hp, hp: h.base.hp,
-      maxMp: h.base.mp, mp: h.base.mp,
-      atk: h.base.atk, def: h.base.def, spd: h.base.spd,
-      dead: false,
-      defending: false,
-    };
-  });
+  return ["ranger", "archer", "mage", "dwarf"].map(buildHero);
 }
 
 // ----- Rendering ----------------------------------------------------------
@@ -147,6 +151,17 @@ function render() {
       const img = getTileCanvas(id, animTime);
       if (img) ctx.drawImage(img, wx * TILE, wy * TILE);
     }
+  }
+
+  // ----- Recruit NPCs (drawn as hero sprites on the world) -----
+  for (const r of RECRUITS) {
+    if (state.flags["recruit_" + r.id]) continue;
+    if (r.x < tx0 - 1 || r.x > tx1 + 1 || r.y < ty0 - 1 || r.y > ty1 + 1) continue;
+    const h = HEROES[r.id];
+    if (!h) continue;
+    const bob = Math.sin(animTime / 360 + r.x * 1.7) * 0.8;
+    drawShadow(r.x * TILE + 8, r.y * TILE + 14, 6, 2);
+    ctx.drawImage(h.sprite, r.x * TILE, Math.round(r.y * TILE + bob));
   }
 
   // ----- Brazier flames over shrines -----
@@ -547,6 +562,9 @@ function tryMove(dx, dy) {
   if (fx && fx.kind === "boss" && !state.flags.boss_defeated) {
     return triggerBoss(fx, { ox, oy });
   }
+  if (fx && fx.kind === "midboss" && !state.flags["mid_" + fx.enemy]) {
+    return triggerMidBoss(fx, { ox, oy });
+  }
 
   // Random encounter check (skip on shrine / interactive tiles).
   const enc = encounterTable(nx, ny);
@@ -566,6 +584,26 @@ function rollEncounter(enc) {
   }
   state.phase = "combat";
   startCombat(state, ids, { onResolved: combatResolved });
+  showCombatMenu();
+}
+
+function triggerMidBoss(fx, prev) {
+  state.log("lore", fx.intro);
+  state.phase = "combat";
+  startCombat(state, [fx.enemy], { boss: true, onResolved: (outcome) => {
+    state.phase = "explore";
+    hideOverlay();
+    if (outcome === "win") {
+      state.flags["mid_" + fx.enemy] = true;
+      state.log("gold", "The herald falls. The way is open.");
+    } else if (outcome === "lose") {
+      state.phase = "gameover"; showGameOver(); return;
+    }
+    if (prev && outcome !== "win") {
+      state.player.x = prev.ox; state.player.y = prev.oy;
+    }
+    render();
+  }});
   showCombatMenu();
 }
 
@@ -599,7 +637,6 @@ function combatResolved(outcome) {
 }
 
 function interactAt(x, y) {
-  // Inspect player tile and the four neighbors.
   const candidates = [[x, y], [x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y]];
   for (const [cx, cy] of candidates) {
     const fx = findInteractable(cx, cy);
@@ -607,6 +644,8 @@ function interactAt(x, y) {
     if (fx.kind === "shrine") return interactShrine(fx);
     if (fx.kind === "chest") return interactChest(fx);
     if (fx.kind === "statue") return interactStatue(fx);
+    if (fx.kind === "recruit") return interactRecruit(fx);
+    if (fx.kind === "midboss") return triggerMidBoss(fx);
     if (fx.kind === "boss") return triggerBoss(fx);
   }
   state.log("sys", "Nothing here calls to you.");
@@ -648,6 +687,55 @@ function interactChest(c) {
 
 function interactStatue(s) {
   for (const ln of s.lines) state.log("lore", ln);
+  render();
+}
+
+function interactRecruit(r) {
+  if (state.flags["recruit_" + r.id]) {
+    state.log("sys", "They have already gone with you.");
+    return;
+  }
+  state.log("lore", r.intro);
+  if (state.party.length < MAX_PARTY) {
+    showOverlay(`
+      <h1>${HEROES[r.id].name} ${HEROES[r.id].title}</h1>
+      <p>${r.intro}</p>
+      <div class="row">
+        <button data-yes>Welcome them</button>
+        <button data-no>Decline</button>
+      </div>
+    `, {
+      "[data-yes]": () => { addRecruit(r); hideOverlay(); },
+      "[data-no]": () => { hideOverlay(); state.log("sys", "You walk on alone."); },
+    });
+  } else {
+    // Party full — pick someone to dismiss.
+    const opts = state.party.map((m, i) =>
+      `<button data-swap="${i}">${m.name} (Lvl ${m.lvl})</button>`).join("");
+    showOverlay(`
+      <h1>Replace whom for ${HEROES[r.id].name}?</h1>
+      <p>${r.intro}</p>
+      <p>Your fellowship is full. Dismiss one to make room:</p>
+      <div class="row">${opts}</div>
+      <div class="row"><button data-no>Decline</button></div>
+    `, {
+      "[data-swap]": (ev, el) => {
+        const i = Number(el.dataset.swap);
+        const old = state.party[i];
+        state.party.splice(i, 1);
+        state.log("sys", `${old.name} bids you farewell.`);
+        addRecruit(r);
+        hideOverlay();
+      },
+      "[data-no]": () => { hideOverlay(); state.log("sys", "You walk on alone."); },
+    });
+  }
+}
+
+function addRecruit(r) {
+  state.party.push(buildHero(r.id));
+  state.flags["recruit_" + r.id] = true;
+  state.log("gold", r.accepted);
   render();
 }
 
@@ -814,8 +902,10 @@ function loadGame() {
     if (!raw) { state.log("sys", "No saved tale."); return false; }
     const snap = JSON.parse(raw);
     state.player = snap.player;
-    const fresh = buildParty();
-    state.party = fresh.map((m, i) => ({ ...m, ...snap.party[i] }));
+    state.party = snap.party.map(s => {
+      const fresh = buildHero(s.id);
+      return Object.assign(fresh, s);
+    });
     state.inventory = snap.inventory;
     state.gold = snap.gold;
     state.steps = snap.steps;

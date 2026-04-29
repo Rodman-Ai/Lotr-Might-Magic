@@ -49,6 +49,24 @@ export const SPELLS = {
                    state.emitFx?.("damage_enemy", { enemy: target, dmg });
                    state.log("hit", `${caster.name} looses a Star Arrow — ${target.name} takes ${dmg}.`);
                  } },
+  holy_word:   { name: "Holy Word",     mp: 10, target: "party",
+                 cast(state, caster) {
+                   const amt = 14 + caster.lvl * 3 + (state.flags.shrine_vilya ? 6 : 0);
+                   for (const m of state.party) {
+                     if (m.dead) continue;
+                     m.hp = Math.min(m.maxHp, m.hp + amt);
+                   }
+                   state.emitFx?.("heal", { amt });
+                   state.log("heal", `${caster.name} sings a Holy Word — the party is mended (+${amt} HP each).`);
+                 } },
+  shadow_strike:{ name: "Shadow Strike", mp: 6, target: "enemy",
+                 cast(state, caster, target) {
+                   const crit = Math.random() < 0.4 ? 2 : 1;
+                   const dmg = (18 + caster.lvl * 4) * crit;
+                   target.hp -= dmg;
+                   state.emitFx?.("damage_enemy", { enemy: target, dmg });
+                   state.log("hit", `${caster.name} ${crit > 1 ? "lands a critical " : ""}Shadow Strike on ${target.name} for ${dmg}.`);
+                 } },
 };
 
 function heal(unit, amt) {

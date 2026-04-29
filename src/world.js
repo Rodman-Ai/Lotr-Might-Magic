@@ -55,8 +55,20 @@ export const STATUES = [
 ];
 
 export const FIXED = [
-  { x: 25, y: 35, kind: "boss", enemy: "nazgul",
+  { x: 26, y: 34, kind: "midboss", enemy: "herald",
+    intro: "A cloaked herald bars the way. \"Turn back, kindler of shrines.\"" },
+  { x: 26, y: 36, kind: "boss", enemy: "nazgul",
     intro: "A cold rises from the cavern. The Wraith-Lord of the Bruinen drifts forth." },
+];
+
+// Recruitable heroes hidden in the world. Interact (E) to recruit.
+export const RECRUITS = [
+  { x: 32, y: 19, id: "faelwen",
+    intro: "[A pale lady kneels by the hearth.] \"I am Faelwen, healer of the Mirror. Let me walk with you.\"",
+    accepted: "Faelwen joins your fellowship." },
+  { x: 38, y: 27, id: "beren",
+    intro: "[A hooded figure rises from the graves.] \"Beren they once called me. Lost. Useful with a knife.\"",
+    accepted: "Beren the Wayward joins your fellowship." },
 ];
 
 // ----- Generator ----------------------------------------------------------
@@ -204,18 +216,19 @@ export function buildWorld() {
 
 // Encounter zones: chance-per-step weighted by region.
 export function encounterTable(x, y) {
-  if (y <= 5) return null;                        // bridge water unreachable
-  if (y <= 9) return { rate: 0.10, pool: ["spectre", "spectre", "warg"] };
-  if (y <= 14) return { rate: 0.06, pool: ["spectre", "warg", "shade"] };
-  if (y <= 23) return { rate: 0.05, pool: ["shade", "shade", "wight"] };
-  if (y <= 31) return { rate: 0.10, pool: ["wight", "shade", "spectre"] };
-  return { rate: 0.12, pool: ["wight", "shade", "warg"] };
+  if (y <= 5) return null;
+  if (y <= 9)  return { rate: 0.10, pool: ["spectre", "wargrider", "crebain", "warg"] };
+  if (y <= 14) return { rate: 0.06, pool: ["ghoul", "spectre", "warg", "crebain"] };
+  if (y <= 23) return { rate: 0.05, pool: ["shade", "banshee", "wight", "crebain"] };
+  if (y <= 31) return { rate: 0.10, pool: ["wight", "ghoul", "banshee", "shade"] };
+  return { rate: 0.12, pool: ["troll", "wight", "wargrider", "shade"] };
 }
 
 export function findInteractable(x, y) {
   for (const s of SHRINES) if (s.x === x && s.y === y) return { kind: "shrine", ...s };
   for (const s of STATUES) if (s.x === x && s.y === y) return { kind: "statue", ...s };
   for (const c of CHESTS) if (c.x === x && c.y === y) return { kind: "chest", ...c };
+  for (const r of RECRUITS) if (r.x === x && r.y === y) return { kind: "recruit", ...r };
   for (const f of FIXED) if (f.x === x && f.y === y) return { ...f };
   return null;
 }

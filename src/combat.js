@@ -155,6 +155,21 @@ function doAttack(state, actor, target) {
 
 function resolveEnemyAction(state, actor, plan) {
   if (actor.hp <= 0) return;
+
+  // Special enemy abilities — chance-based AoE for banshees.
+  if (actor.ability === "wail" && Math.random() < 0.45) {
+    state.log("hit", `${actor.name} unleashes a soul-rending wail!`);
+    for (const m of state.party) {
+      if (m.dead) continue;
+      const roll = 0.7 + Math.random() * 0.3;
+      const dmg = Math.max(1, Math.floor(actor.atk * 0.7 * roll - m.def * (m.defending ? 1.0 : 0.4)));
+      m.hp -= dmg;
+      state.emitFx?.("damage_party", { member: m, dmg });
+      if (m.hp <= 0) { m.hp = 0; m.dead = true; state.log("hit", `${m.name} falls!`); }
+    }
+    return;
+  }
+
   const t = plan.target;
   if (t.dead) {
     const alt = state.party.filter(m => !m.dead);
