@@ -425,10 +425,11 @@ function renderTitle() {
   const pulse = 0.5 + 0.5 * Math.sin(animTime / 380);
   ctx.fillStyle = `rgba(216,210,194,${(0.5 + pulse * 0.5).toFixed(3)})`;
   ctx.font = "11px ui-monospace, monospace";
-  ctx.fillText("Press ENTER to begin", VIEW_W / 2, 178);
+  const prompt = isTouchDevice() ? "Tap to begin" : "Press ENTER to begin";
+  ctx.fillText(prompt, VIEW_W / 2, 178);
   ctx.fillStyle = "rgba(122,136,152,0.8)";
   ctx.font = "9px ui-monospace, monospace";
-  ctx.fillText("F9 to load saved game", VIEW_W / 2, 192);
+  ctx.fillText(isTouchDevice() ? "Tap LOAD to restore" : "F9 to load saved game", VIEW_W / 2, 192);
   ctx.restore();
   ctx.textAlign = "left";
 }
@@ -931,9 +932,104 @@ window.addEventListener("keydown", (ev) => {
   }
 });
 
+// ----- Touch input -------------------------------------------------------
+
+function moveDir(dir) {
+  switch (dir) {
+    case "up":    tryMove(0, -1); break;
+    case "down":  tryMove(0,  1); break;
+    case "left":  tryMove(-1, 0); break;
+    case "right": tryMove(1,  0); break;
+  }
+}
+
+function bindHoldRepeat(el, fire) {
+  let timer = null;
+  let pressed = false;
+  const start = (ev) => {
+    if (ev) ev.preventDefault();
+    if (pressed) return;
+    pressed = true;
+    fire();
+    timer = setInterval(() => {
+      if (!pressed) return;
+      fire();
+    }, 170);
+  };
+  const stop = () => {
+    pressed = false;
+    if (timer) { clearInterval(timer); timer = null; }
+  };
+  el.addEventListener("touchstart", start, { passive: false });
+  el.addEventListener("touchend", stop);
+  el.addEventListener("touchcancel", stop);
+  el.addEventListener("mousedown", start);
+  el.addEventListener("mouseup", stop);
+  el.addEventListener("mouseleave", stop);
+  // Prevent native context menu on long-press.
+  el.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+
+function actionFor(act) {
+  if (state.phase === "title") {
+    if (act === "interact") newGame();
+    else if (act === "load") loadGame();
+    return;
+  }
+  if (state.phase === "gameover" || state.phase === "victory") {
+    // Let overlay buttons handle these via their own click handlers.
+    return;
+  }
+  if (state.combat) return; // combat handled by its own DOM overlay
+  switch (act) {
+    case "interact": interactAt(state.player.x, state.player.y); break;
+    case "inventory": showInventory(); break;
+    case "party": showParty(); break;
+    case "save": saveGame(); break;
+    case "load": loadGame(); break;
+  }
+}
+
+function bindTouchControls() {
+  for (const btn of document.querySelectorAll("#dpad .dp")) {
+    bindHoldRepeat(btn, () => moveDir(btn.dataset.dir));
+  }
+  for (const btn of document.querySelectorAll("#actions .ab")) {
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      actionFor(btn.dataset.act);
+    });
+  }
+  // Tap on the canvas during the title screen acts as Enter.
+  screen.addEventListener("touchend", (ev) => {
+    if (state.phase === "title") {
+      ev.preventDefault();
+      newGame();
+    }
+  }, { passive: false });
+  screen.addEventListener("click", () => {
+    if (state.phase === "title") newGame();
+  });
+  // Stop touch scrolling when interacting with controls.
+  for (const sel of ["#dpad", "#actions", "#overlay"]) {
+    const el = document.querySelector(sel);
+    if (!el) continue;
+    el.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+  }
+}
+
 // ----- Boot --------------------------------------------------------------
 
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+let _isTouch = null;
+function isTouchDevice() {
+  if (_isTouch !== null) return _isTouch;
+  _isTouch = ("ontouchstart" in window) ||
+             (navigator.maxTouchPoints > 0) ||
+             matchMedia("(pointer: coarse)").matches;
+  return _isTouch;
+}
 
 // ----- fx event API (combat.js posts here via state.emitFx) ---------------
 
@@ -1034,6 +1130,7 @@ function boot() {
   buildTileCache();
   state.grid = buildWorld();
   state.party = buildParty();
+  bindTouchControls();
   requestAnimationFrame(frame);
 }
 

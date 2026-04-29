@@ -2,20 +2,42 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0b0d12" />
   <title>Shadows of Rivendell — A Pixel-Art Might & Magic Tale</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="app">
     <div id="frame">
-      <canvas id="screen" width="320" height="240"></canvas>
+      <div id="screen-wrap">
+        <canvas id="screen" width="320" height="240"></canvas>
+        <div id="overlay" class="hidden"></div>
+      </div>
       <div id="hud">
         <div id="party"></div>
         <div id="log"></div>
       </div>
-      <div id="overlay" class="hidden"></div>
     </div>
+
+    <div id="touch">
+      <div id="dpad" aria-label="movement controls">
+        <button class="dp up"     data-dir="up"     aria-label="north">▲</button>
+        <button class="dp left"   data-dir="left"   aria-label="west">◀</button>
+        <button class="dp right"  data-dir="right"  aria-label="east">▶</button>
+        <button class="dp down"   data-dir="down"   aria-label="south">▼</button>
+      </div>
+      <div id="actions" aria-label="actions">
+        <button class="ab" data-act="interact" aria-label="interact">●</button>
+        <button class="ab small" data-act="inventory">Pack</button>
+        <button class="ab small" data-act="party">Party</button>
+        <button class="ab small" data-act="save">Save</button>
+        <button class="ab small" data-act="load">Load</button>
+      </div>
+    </div>
+
     <div id="controls">
       <span><b>Move</b> WASD / Arrows</span>
       <span><b>Interact</b> E / Space</span>

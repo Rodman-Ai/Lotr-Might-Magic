@@ -16,28 +16,34 @@
 html, body {
   margin: 0;
   padding: 0;
+  width: 100%;
+  min-height: 100vh;
   background: radial-gradient(circle at 50% 30%, #0f1320 0%, #05060a 80%);
   color: var(--ink);
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+  touch-action: manipulation;
 }
 
 #app {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 12px;
-  padding: 16px;
+  padding: 12px;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 1240px;
 }
 
+/* ----- Wide layout: canvas left, sidebar right ----- */
 #frame {
   position: relative;
   display: grid;
-  grid-template-columns: auto 240px;
+  grid-template-columns: minmax(0, 1fr) 240px;
   gap: 10px;
   background: var(--panel);
   border: 1px solid #2a2f43;
@@ -45,16 +51,26 @@ html, body {
   border-radius: 6px;
   box-shadow: 0 0 0 1px #000, 0 8px 30px rgba(0,0,0,.6),
               inset 0 0 60px rgba(0,0,0,.6);
+  width: 100%;
+}
+
+#screen-wrap {
+  position: relative;
+  width: min(100%, 960px);
+  margin: 0 auto;
 }
 
 #screen {
-  width: 960px;
-  height: 720px;
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  aspect-ratio: 4 / 3;
+  height: auto;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   background: #000;
   border: 1px solid #000;
-  display: block;
+  touch-action: none;
 }
 
 #hud {
@@ -62,7 +78,8 @@ html, body {
   flex-direction: column;
   gap: 8px;
   width: 240px;
-  height: 720px;
+  align-self: stretch;
+  min-height: 0;
 }
 
 #party {
@@ -93,9 +110,9 @@ html, body {
   background: #000; border: 1px solid #2a2f43;
   image-rendering: pixelated;
 }
-.member .info { display: flex; flex-direction: column; gap: 2px; }
+.member .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .member .name { color: var(--accent-2); font-weight: 700; }
-.member .stats { font-size: 10px; color: var(--ink-dim); }
+.member .stats { font-size: 10px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar {
   height: 4px; background: #060810; border: 1px solid #2a2f43;
   border-radius: 2px; overflow: hidden; position: relative;
@@ -115,6 +132,8 @@ html, body {
   line-height: 1.4;
   color: var(--ink);
   scrollbar-width: thin;
+  max-height: 240px;
+  min-height: 80px;
 }
 #log .sys { color: var(--ink-dim); }
 #log .hit { color: var(--bad); }
@@ -122,35 +141,155 @@ html, body {
 #log .lore { color: var(--accent); }
 #log .gold { color: var(--accent-2); }
 
+/* Overlay covers the canvas only (positioned inside #screen-wrap). */
 #overlay {
   position: absolute;
-  inset: 10px;
-  background: rgba(5,7,12,0.92);
+  inset: 0;
+  background: rgba(5,7,12,0.94);
   color: var(--ink);
   border: 1px solid #2a2f43;
   border-radius: 4px;
-  padding: 18px;
+  padding: 14px;
   z-index: 10;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   font-size: 14px;
   overflow: auto;
 }
 #overlay.hidden { display: none; }
-#overlay h1 { color: var(--accent-2); margin: 0 0 6px; font-size: 22px; letter-spacing: 1px;}
-#overlay h2 { color: var(--accent); margin: 4px 0; font-size: 16px; }
+#overlay h1 { color: var(--accent-2); margin: 0 0 6px; font-size: 20px; letter-spacing: 1px; }
+#overlay h2 { color: var(--accent); margin: 4px 0; font-size: 15px; }
 #overlay button {
   background: #1c2334; color: var(--ink); border: 1px solid #2a2f43;
-  padding: 6px 10px; cursor: pointer; font-family: inherit; font-size: 13px;
-  border-radius: 3px;
+  padding: 8px 12px; cursor: pointer; font-family: inherit; font-size: 14px;
+  border-radius: 3px; min-height: 36px;
+  touch-action: manipulation;
 }
 #overlay button:hover { background: #28304a; }
+#overlay button:active { background: #2f395a; }
 #overlay button:disabled { opacity: .4; cursor: not-allowed; }
-#overlay .row { display: flex; gap: 8px; flex-wrap: wrap; }
+#overlay .row { display: flex; gap: 6px; flex-wrap: wrap; }
+#overlay ul { padding-left: 20px; margin: 4px 0; }
 
 #controls {
   display: flex; gap: 14px; flex-wrap: wrap; justify-content: center;
   font-size: 12px; color: var(--ink-dim);
 }
 #controls b { color: var(--accent-2); }
+
+/* ----- Touch controls ----- */
+#touch {
+  display: none;
+  align-self: center;
+  width: min(100%, 720px);
+  padding: 0 8px;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+}
+#dpad {
+  position: relative;
+  width: 168px;
+  height: 168px;
+  flex: 0 0 auto;
+}
+#dpad .dp {
+  position: absolute;
+  width: 56px; height: 56px;
+  background: #1c2334;
+  color: var(--ink);
+  border: 1px solid #2a2f43;
+  border-radius: 6px;
+  font-size: 18px;
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+}
+#dpad .dp:active { background: #2f395a; }
+#dpad .up    { top: 0;   left: 56px; }
+#dpad .down  { top: 112px; left: 56px; }
+#dpad .left  { top: 56px; left: 0; }
+#dpad .right { top: 56px; left: 112px; }
+
+#actions {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 8px;
+  align-items: center;
+}
+.ab {
+  background: #1c2334;
+  color: var(--ink);
+  border: 1px solid #2a2f43;
+  border-radius: 6px;
+  padding: 0 14px;
+  font-family: inherit;
+  font-size: 14px;
+  height: 44px;
+  min-width: 64px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ab:active { background: #2f395a; }
+.ab[data-act="interact"] {
+  grid-column: span 2;
+  height: 60px;
+  font-size: 22px;
+  background: #2a3a58;
+  border-color: #3a4868;
+  color: var(--accent-2);
+}
+.ab[data-act="interact"]:active { background: #3a4868; }
+.ab.small { font-size: 12px; height: 36px; min-width: 56px; padding: 0 8px; }
+
+/* ----- Mobile / coarse pointer breakpoint ----- */
+@media (max-width: 880px) {
+  #app { padding: 6px; gap: 8px; }
+  #frame {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    padding: 6px;
+    gap: 6px;
+  }
+  #hud { width: 100%; }
+  #party { font-size: 11px; padding: 6px; }
+  .member { padding: 3px; }
+  .member .stats { font-size: 9px; }
+  #log { max-height: 140px; min-height: 60px; font-size: 11px; }
+  #controls { display: none; }
+  #overlay { padding: 10px; font-size: 13px; }
+  #overlay h1 { font-size: 18px; }
+  #overlay h2 { font-size: 14px; }
+}
+
+/* Show touch controls on touch / coarse-pointer or narrow screens. */
+@media (pointer: coarse), (max-width: 880px) {
+  #touch { display: flex; }
+}
+
+/* On very narrow phones, party as 2x2 grid for compactness */
+@media (max-width: 520px) {
+  #party {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+  #party > div:last-child { grid-column: span 2; }
+  .member { font-size: 10px; }
+  .member .name { font-size: 11px; }
+  .member .stats { font-size: 8px; }
+
+  #dpad { width: 144px; height: 144px; }
+  #dpad .dp { width: 48px; height: 48px; }
+  #dpad .up    { left: 48px; }
+  #dpad .down  { top: 96px; left: 48px; }
+  #dpad .right { left: 96px; }
+  #touch { gap: 8px; }
+  .ab { min-width: 52px; height: 40px; padding: 0 8px; }
+  .ab[data-act="interact"] { height: 52px; font-size: 18px; }
+  .ab.small { font-size: 11px; height: 32px; min-width: 48px; }
+}
