@@ -536,6 +536,14 @@ function renderCombatVeil(shakeX, shakeY) {
     ctx.fillStyle = "#000"; ctx.fillRect(px, py, w, h);
     ctx.fillStyle = "#b34a4a";
     ctx.fillRect(px, py, Math.round(w * (e.hp / e.maxHp)), h);
+    // Weakness icon (small dot) next to the pip.
+    if (e.weak === "holy") {
+      ctx.fillStyle = "#fff2a8";
+      ctx.fillRect(px + w + 1, py - 1, 4, 4);
+    } else if (e.weak === "lightning") {
+      ctx.fillStyle = "#a0d0ff";
+      ctx.fillRect(px + w + 1, py - 1, 4, 4);
+    }
   }
 
   // Slash arcs over targets (white-yellow swipe).
@@ -1170,12 +1178,24 @@ function pickWeakestEnemyIdx() {
   return best;
 }
 
+let combatQuickUseItem = null;
+
 function showCombatMenu() {
   const c = state.combat;
   if (!c) return;
   const livingParty = state.party.filter(m => !m.dead);
   const plan = new Array(livingParty.length).fill(null);
   let idx = 0;
+  // Bind the quick-use hotkey to the current acting hero for this round.
+  combatQuickUseItem = (itemId) => {
+    if (idx >= livingParty.length) return;
+    const it = ITEMS[itemId];
+    if (!it) return;
+    if (it.target === "party") plan[idx] = { kind: "item", itemId };
+    else plan[idx] = { kind: "item", itemId, targetIdx: state.party.indexOf(livingParty[idx]) };
+    idx++;
+    step();
+  };
 
   function step() {
     if (idx >= livingParty.length) {
@@ -1212,6 +1232,7 @@ function showCombatMenu() {
         <button data-act="defend">Defend</button>
         <button data-act="flee">Flee</button>
       </div>
+      <div style="font-size:11px;color:var(--ink-dim);">Press 1-4 for quick items.</div>
       <div id="sub"></div>
     `, {
       "[data-act=attack]": () => {
@@ -1650,7 +1671,20 @@ window.addEventListener("keydown", (ev) => {
     return;
   }
   if (state.phase === "gameover" || state.phase === "victory") return;
-  if (state.combat) return;
+  if (state.combat) {
+    // Quick-use item hotkeys 1-4 in the combat command phase: targets the
+    // current actor (or the whole party for party-target items).
+    if (state.combat.phase === "command" && /^[1-4]$/.test(ev.key)) {
+      const slot = Number(ev.key) - 1;
+      const owned = Object.entries(state.inventory)
+        .filter(([id, n]) => n > 0 && !id.startsWith("eq:") && id !== "lore_stone")
+        .map(([id]) => id);
+      const id = owned[slot];
+      if (id && combatQuickUseItem) combatQuickUseItem(id);
+      ev.preventDefault();
+    }
+    return;
+  }
 
   const sprint = ev.shiftKey;
   switch (ev.key) {
@@ -2212,13 +2246,14 @@ function emitFx(kind, payload) {
       const baseX = Math.round((idx + 1) * slot);
       const baseY = (e.boss ? 24 : 36);
       fx.dmgNumbers.push({
-        x: baseX, y: baseY, text: String(payload.dmg),
-        color: "rgba(255,200,90,ALPHA)",
-        born: animTime, dur: 700,
+        x: baseX, y: baseY,
+        text: payload.crit ? `${payload.dmg}!` : String(payload.dmg),
+        color: payload.crit ? "rgba(255,250,200,ALPHA)" : "rgba(255,200,90,ALPHA)",
+        born: animTime, dur: payload.crit ? 900 : 700,
       });
       fx.hitFlash.set(e.instanceId, animTime + 200);
-      fx.shake.until = animTime + 180;
-      fx.shake.mag = Math.min(4, 1 + payload.dmg / 20);
+      fx.shake.until = animTime + (payload.crit ? 260 : 180);
+      fx.shake.mag = Math.min(5, 1 + payload.dmg / 20 + (payload.crit ? 1.5 : 0));
       break;
     }
     case "damage_party": {

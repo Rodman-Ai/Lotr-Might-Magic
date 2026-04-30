@@ -153,11 +153,15 @@ function doAttack(state, actor, target) {
   const roll = 0.85 + Math.random() * 0.3;
   const blessed = (state.flags.shrine_oath && actor.name === "Aranor") ? 4 : 0;
   const atk = effectiveAtk(actor) + blessed;
-  let dmg = Math.max(1, Math.floor(atk * roll - target.def * 0.5));
+  // Crit chance scales with SPD (5 SPD = 5%, capped at 30%).
+  const critChance = Math.min(0.30, actor.spd * 0.01);
+  const isCrit = Math.random() < critChance;
+  const critMul = isCrit ? 1.8 : 1;
+  let dmg = Math.max(1, Math.floor(atk * roll * critMul - target.def * 0.5));
   target.hp -= dmg;
-  state.emitFx?.("damage_enemy", { enemy: target, dmg });
+  state.emitFx?.("damage_enemy", { enemy: target, dmg, crit: isCrit });
   state.emitFx?.("slash_vfx", { target });
-  state.log("hit", `${actor.name} strikes ${target.name} for ${dmg}.`);
+  state.log("hit", `${actor.name} ${isCrit ? "lands a critical blow on" : "strikes"} ${target.name} for ${dmg}.`);
   if (target.hp <= 0) {
     state.emitFx?.("dissolve", { target });
     state.log("sys", `${target.name} dissolves into mist.`);
@@ -173,7 +177,9 @@ function resolveEnemyAction(state, actor, plan) {
     for (const m of state.party) {
       if (m.dead) continue;
       const roll = 0.7 + Math.random() * 0.3;
-      const dmg = Math.max(1, Math.floor(actor.atk * 0.7 * roll - m.def * (m.defending ? 1.0 : 0.4)));
+      let dmg = Math.max(1, Math.floor(actor.atk * 0.7 * roll - effectiveDef(m) * (m.defending ? 1.0 : 0.4)));
+      // Defenders shrug off half of an AoE wail.
+      if (m.defending) dmg = Math.max(1, Math.floor(dmg * 0.5));
       m.hp -= dmg;
       state.emitFx?.("damage_party", { member: m, dmg });
       if (m.hp <= 0) { m.hp = 0; m.dead = true; state.log("hit", `${m.name} falls!`); }
