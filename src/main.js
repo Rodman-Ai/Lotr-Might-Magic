@@ -50,6 +50,9 @@ const embers = [];
 // Mini-map visibility flag.
 let miniMapOpen = false;
 
+// View mode: "2d" (top-down) or "3d" (fake first-person, M&M4-style).
+let viewMode = "2d";
+
 const overlayEl = document.getElementById("overlay");
 const partyEl = document.getElementById("party");
 const logEl = document.getElementById("log");
@@ -122,6 +125,7 @@ function getPlayerPixel() {
 
 function render() {
   if (state.phase === "title") return renderTitle();
+  if (viewMode === "3d") return render3D();
 
   const { px: ppx, py: ppy, moving } = getPlayerPixel();
 
@@ -1645,21 +1649,54 @@ window.addEventListener("keydown", (ev) => {
 
   const sprint = ev.shiftKey;
   switch (ev.key) {
-    case "ArrowUp": case "w": case "W": stepMove(0, -1, sprint); ev.preventDefault(); break;
-    case "ArrowDown": case "s": case "S": stepMove(0, 1, sprint); ev.preventDefault(); break;
-    case "ArrowLeft": case "a": case "A": stepMove(-1, 0, sprint); ev.preventDefault(); break;
-    case "ArrowRight": case "d": case "D": stepMove(1, 0, sprint); ev.preventDefault(); break;
+    case "ArrowUp": case "w": case "W": moveInput("forward", sprint); ev.preventDefault(); break;
+    case "ArrowDown": case "s": case "S": moveInput("back", sprint); ev.preventDefault(); break;
+    case "ArrowLeft": case "a": case "A": moveInput("left", sprint); ev.preventDefault(); break;
+    case "ArrowRight": case "d": case "D": moveInput("right", sprint); ev.preventDefault(); break;
     case "e": case "E": case " ":
       interactAt(state.player.x, state.player.y); ev.preventDefault(); break;
     case "i": case "I": showInventory(); ev.preventDefault(); break;
     case "c": case "C": showParty(); ev.preventDefault(); break;
     case "m": case "M": miniMapOpen = !miniMapOpen; ev.preventDefault(); break;
     case "q": case "Q": showQuests(); ev.preventDefault(); break;
+    case "v": case "V": toggleViewMode(); ev.preventDefault(); break;
     case "Escape": hideOverlay(); miniMapOpen = false; break;
     case "F5": showSaveSlots(); ev.preventDefault(); break;
     case "F9": showLoadSlots(); ev.preventDefault(); break;
   }
 });
+
+function toggleViewMode() {
+  viewMode = (viewMode === "2d") ? "3d" : "2d";
+  // Cancel any in-flight walk tween so view switching is clean.
+  walk = null;
+  state.log("sys", `View: ${viewMode === "3d" ? "first-person" : "top-down"}.`);
+}
+
+// Direction-input dispatcher that respects the active view mode.
+//   2D: left/right/forward/back are absolute compass directions (N/S/E/W).
+//   3D: forward/back move along facing; left/right turn 90 degrees.
+function moveInput(action, sprint) {
+  if (viewMode === "3d") {
+    if (action === "forward") {
+      const v = facingVector(state.player.facing);
+      stepMove(v[0], v[1], sprint);
+    } else if (action === "back") {
+      const v = facingVector(state.player.facing);
+      stepMove(-v[0], -v[1], sprint);
+    } else if (action === "left") {
+      state.player.facing = turnLeft(state.player.facing);
+    } else if (action === "right") {
+      state.player.facing = turnRight(state.player.facing);
+    }
+    return;
+  }
+  // 2D top-down.
+  if (action === "forward") stepMove(0, -1, sprint);
+  else if (action === "back") stepMove(0, 1, sprint);
+  else if (action === "left") stepMove(-1, 0, sprint);
+  else if (action === "right") stepMove(1, 0, sprint);
+}
 
 function stepMove(dx, dy, sprint) {
   if (!sprint) { tryMove(dx, dy); return; }
@@ -1691,10 +1728,10 @@ function stepMove(dx, dy, sprint) {
 
 function moveDir(dir) {
   switch (dir) {
-    case "up":    tryMove(0, -1); break;
-    case "down":  tryMove(0,  1); break;
-    case "left":  tryMove(-1, 0); break;
-    case "right": tryMove(1,  0); break;
+    case "up":    moveInput("forward", false); break;
+    case "down":  moveInput("back", false); break;
+    case "left":  moveInput("left", false); break;
+    case "right": moveInput("right", false); break;
   }
 }
 
@@ -1738,6 +1775,8 @@ function actionFor(act) {
   if (state.combat) return; // combat handled by its own DOM overlay
   switch (act) {
     case "interact": interactAt(state.player.x, state.player.y); break;
+    case "view": toggleViewMode(); break;
+    case "map": miniMapOpen = !miniMapOpen; break;
     case "inventory": showInventory(); break;
     case "party": showParty(); break;
     case "save": showSaveSlots(); break;
@@ -1776,6 +1815,326 @@ function bindTouchControls() {
 // ----- Boot --------------------------------------------------------------
 
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+function facingVector(f) {
+  if (f === "north") return [0, -1];
+  if (f === "south") return [0,  1];
+  if (f === "east")  return [1,  0];
+  if (f === "west")  return [-1, 0];
+  return [0, 1];
+}
+function leftVector(f) {
+  // 90° counter-clockwise from facing.
+  if (f === "north") return [-1, 0];
+  if (f === "south") return [1, 0];
+  if (f === "east")  return [0, -1];
+  if (f === "west")  return [0, 1];
+  return [-1, 0];
+}
+function turnLeft(f)  { return ({ north: "west", west: "south", south: "east", east: "north" })[f] || "south"; }
+function turnRight(f) { return ({ north: "east", east: "south", south: "west", west: "north" })[f] || "south"; }
+
+function inBounds(x, y) { return x >= 0 && y >= 0 && x < W && y < H; }
+
+// Tiles that visually block the corridor view in 3D mode.
+function isViewBlocking(id) {
+  if (id == null) return true; // out of bounds = wall
+  return id === TILES.WALL || id === TILES.WATER || id === TILES.TREE
+      || id === TILES.FOUNTAIN || id === TILES.STATUE || id === TILES.GRAVE;
+}
+
+// Frames define the inset rectangle of the corridor at each depth, with
+// frames[0] = full canvas and successive frames shrinking toward the
+// vanishing point.
+const VIEW_FRAMES = [
+  { x0: 0,   y0: 0,   x1: 320, y1: 240 },
+  { x0: 48,  y0: 36,  x1: 272, y1: 204 },
+  { x0: 96,  y0: 72,  x1: 224, y1: 168 },
+  { x0: 132, y0: 100, x1: 188, y1: 140 },
+  { x0: 152, y0: 114, x1: 168, y1: 126 },
+];
+
+function render3D() {
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  // Sky / ceiling with subtle horizontal banding.
+  const ceil = ctx.createLinearGradient(0, 0, 0, VIEW_H / 2);
+  ceil.addColorStop(0, "#05070e");
+  ceil.addColorStop(1, "#15192a");
+  ctx.fillStyle = ceil;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H / 2);
+
+  // Floor (perspective shading toward vanishing point).
+  for (let y = VIEW_H / 2; y < VIEW_H; y++) {
+    const t = (y - VIEW_H / 2) / (VIEW_H / 2);
+    const r = Math.round(20 + t * 30);
+    const g = Math.round(20 + t * 26);
+    const b = Math.round(28 + t * 14);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(0, y, VIEW_W, 1);
+  }
+  // Floor herringbone hint.
+  ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 6; i++) {
+    const y = VIEW_H / 2 + i * 18 + 6;
+    ctx.beginPath();
+    ctx.moveTo(0, y); ctx.lineTo(VIEW_W, y); ctx.stroke();
+  }
+  // Vanishing point lines on the floor.
+  ctx.strokeStyle = "rgba(0,0,0,0.4)";
+  for (let i = 0; i <= 8; i++) {
+    const x = i * 40;
+    ctx.beginPath();
+    ctx.moveTo(x, VIEW_H);
+    ctx.lineTo(160, VIEW_H / 2);
+    ctx.stroke();
+  }
+
+  const dirVec = facingVector(state.player.facing);
+  const lvec = leftVector(state.player.facing);
+
+  // Collect entities to draw at each depth (with side: -1 left, 0 forward, +1 right).
+  const visibleProps = []; // { d, side, kind, payload }
+  const facingForward = (d) => [state.player.x + dirVec[0] * d, state.player.y + dirVec[1] * d];
+  function tileAt(x, y) {
+    if (!inBounds(x, y)) return null;
+    let id = state.grid[y][x];
+    if (id === TILES.SHRINE) {
+      const sh = SHRINES.find(s => s.x === x && s.y === y);
+      if (sh && state.flags[sh.id]) id = TILES.SHRINE_LIT;
+    } else if (id === TILES.CHEST) {
+      const c = CHESTS.find(c => c.x === x && c.y === y);
+      if (c && state.flags["chest_" + c.x + "_" + c.y]) id = TILES.CHEST_OPEN;
+    }
+    return id;
+  }
+
+  // Far-to-near, so closer panels paint over farther ones.
+  for (let d = 4; d >= 1; d--) {
+    const [tx, ty] = facingForward(d);
+    if (!inBounds(tx, ty)) continue;
+    const tile = tileAt(tx, ty);
+
+    // Side walls between (d-1) and (d).
+    const ltx = tx + lvec[0], lty = ty + lvec[1];
+    const ltile = tileAt(ltx, lty);
+    if (isViewBlocking(ltile)) {
+      drawSideWall(VIEW_FRAMES[d - 1], VIEW_FRAMES[d], "left", ltile, d);
+    }
+    const rtx = tx - lvec[0], rty = ty - lvec[1];
+    const rtile = tileAt(rtx, rty);
+    if (isViewBlocking(rtile)) {
+      drawSideWall(VIEW_FRAMES[d - 1], VIEW_FRAMES[d], "right", rtile, d);
+    }
+
+    // Entity props on side tiles (recruits, NPCs, chests etc.) - simplified, only forward axis.
+
+    if (isViewBlocking(tile)) {
+      drawFrontWall(VIEW_FRAMES[d], tile, d);
+    } else {
+      // Open passage. Render forward decorations (door, shrine, chest).
+      if (tile === TILES.DOOR) drawDoorAtDepth(VIEW_FRAMES[d - 1], VIEW_FRAMES[d]);
+      // Static interactables visible ahead.
+      const fx = findInteractable(tx, ty);
+      if (fx) visibleProps.push({ d, fx, tile });
+    }
+  }
+
+  // Draw forward props (back-to-front is already by depth ordering: we want larger=closer drawn on top).
+  visibleProps.sort((a, b) => b.d - a.d);
+  for (const p of visibleProps) drawForwardProp(p);
+
+  // Compass + facing indicator at the top.
+  drawCompass(state.player.facing);
+
+  // Vignette + lighting darken corners.
+  const grd = ctx.createRadialGradient(160, 120, 60, 160, 120, 200);
+  grd.addColorStop(0, "rgba(0,0,0,0)");
+  grd.addColorStop(1, "rgba(0,0,0,0.7)");
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  if (state.combat) renderCombatVeil(0, 0);
+  if (miniMapOpen) renderMiniMap();
+  renderHUD();
+}
+
+function depthShade(d, base) {
+  const k = Math.max(0.25, 1 - (d - 1) * 0.18);
+  return base.map(c => Math.round(c * k));
+}
+function rgb([r, g, b]) { return `rgb(${r},${g},${b})`; }
+
+function frontFillFor(tile, d) {
+  if (tile === TILES.WALL)     return rgb(depthShade(d, [80, 80, 100]));
+  if (tile === TILES.WATER)    return rgb(depthShade(d, [40, 60, 130]));
+  if (tile === TILES.TREE)     return rgb(depthShade(d, [40, 70, 50]));
+  if (tile === TILES.FOUNTAIN) return rgb(depthShade(d, [110, 130, 150]));
+  if (tile === TILES.STATUE)   return rgb(depthShade(d, [120, 130, 150]));
+  if (tile === TILES.GRAVE)    return rgb(depthShade(d, [80, 80, 95]));
+  return rgb(depthShade(d, [60, 60, 70]));
+}
+
+function drawFrontWall(frame, tile, d) {
+  ctx.fillStyle = frontFillFor(tile, d);
+  ctx.fillRect(frame.x0, frame.y0, frame.x1 - frame.x0, frame.y1 - frame.y0);
+  // Brick/etching pattern.
+  ctx.strokeStyle = "rgba(0,0,0,0.45)";
+  ctx.lineWidth = 1;
+  const w = frame.x1 - frame.x0, h = frame.y1 - frame.y0;
+  const rows = Math.max(2, Math.round(h / 14));
+  for (let i = 1; i < rows; i++) {
+    const y = frame.y0 + (i / rows) * h;
+    ctx.beginPath(); ctx.moveTo(frame.x0, y); ctx.lineTo(frame.x1, y); ctx.stroke();
+  }
+  for (let r = 0; r < rows; r++) {
+    const off = r % 2 === 0 ? 0 : 0.5;
+    const cols = 3;
+    for (let c = 1; c < cols; c++) {
+      const x = frame.x0 + ((c + off) / cols) * w;
+      const y0 = frame.y0 + (r / rows) * h;
+      const y1 = frame.y0 + ((r + 1) / rows) * h;
+      ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
+    }
+  }
+  // Tree silhouette overlay.
+  if (tile === TILES.TREE) {
+    ctx.fillStyle = "rgba(20,30,20,0.5)";
+    ctx.beginPath();
+    ctx.arc((frame.x0 + frame.x1) / 2, frame.y0 + h * 0.3, h * 0.32, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Statue silhouette.
+  if (tile === TILES.STATUE || tile === TILES.GRAVE) {
+    ctx.fillStyle = "rgba(40,40,60,0.6)";
+    const cx = (frame.x0 + frame.x1) / 2;
+    ctx.fillRect(cx - w * 0.18, frame.y0 + h * 0.25, w * 0.36, h * 0.6);
+  }
+}
+
+function drawSideWall(near, far, side, tile, d) {
+  const x_near = side === "left" ? near.x0 : near.x1;
+  const x_far  = side === "left" ? far.x0  : far.x1;
+  ctx.beginPath();
+  ctx.moveTo(x_near, near.y0);
+  ctx.lineTo(x_far,  far.y0);
+  ctx.lineTo(x_far,  far.y1);
+  ctx.lineTo(x_near, near.y1);
+  ctx.closePath();
+  ctx.fillStyle = frontFillFor(tile, d);
+  ctx.fill();
+  // Brick stripes following depth.
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x_near, near.y0);
+  ctx.lineTo(x_far,  far.y0);
+  ctx.lineTo(x_far,  far.y1);
+  ctx.lineTo(x_near, near.y1);
+  ctx.closePath();
+  ctx.clip();
+  ctx.strokeStyle = "rgba(0,0,0,0.45)";
+  ctx.lineWidth = 1;
+  // Horizontal brick rows interpolated.
+  const rows = 4;
+  for (let r = 1; r < rows; r++) {
+    const t = r / rows;
+    const y_n = near.y0 + (near.y1 - near.y0) * t;
+    const y_f = far.y0 + (far.y1 - far.y0) * t;
+    ctx.beginPath();
+    ctx.moveTo(x_near, y_n); ctx.lineTo(x_far, y_f); ctx.stroke();
+  }
+  // Vertical receding line.
+  ctx.beginPath();
+  ctx.moveTo(x_far, far.y0); ctx.lineTo(x_far, far.y1); ctx.stroke();
+  ctx.restore();
+}
+
+function drawDoorAtDepth(near, far) {
+  // Render a door silhouette in the far frame (a vertical brown rectangle).
+  const cx = (far.x0 + far.x1) / 2;
+  const w = (far.x1 - far.x0) * 0.5;
+  ctx.fillStyle = "rgba(60,40,20,0.85)";
+  ctx.fillRect(cx - w / 2, far.y0 + 4, w, far.y1 - far.y0 - 4);
+  ctx.fillStyle = "rgba(200,160,90,0.7)";
+  ctx.fillRect(cx + w / 2 - 3, (far.y0 + far.y1) / 2, 1, 2);
+}
+
+function drawForwardProp({ d, fx, tile }) {
+  const frame = VIEW_FRAMES[d - 1];
+  const next = VIEW_FRAMES[d];
+  const cx = (frame.x0 + frame.x1) / 2;
+  const baseY = (frame.y1 + next.y1) / 2;
+  const size = (frame.y1 - next.y1) * 0.9;
+  if (fx.kind === "shrine") {
+    const lit = !!state.flags[fx.id];
+    ctx.fillStyle = lit ? "rgba(255,200,90,0.9)" : "rgba(150,160,180,0.8)";
+    ctx.fillRect(cx - size * 0.2, baseY - size * 0.6, size * 0.4, size * 0.6);
+    if (lit) {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      addBloom(cx, baseY - size * 0.4, size, "rgba(255,200,90,0.6)");
+      ctx.restore();
+    }
+  } else if (fx.kind === "chest") {
+    const opened = state.flags["chest_" + fx.x + "_" + fx.y];
+    ctx.fillStyle = opened ? "rgba(50,30,18,0.9)" : "rgba(120,80,40,0.95)";
+    ctx.fillRect(cx - size * 0.25, baseY - size * 0.35, size * 0.5, size * 0.35);
+  } else if (fx.kind === "campfire") {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    addBloom(cx, baseY - size * 0.3, size, "rgba(255,140,60,0.7)");
+    ctx.restore();
+    ctx.fillStyle = "rgba(60,30,10,0.9)";
+    ctx.fillRect(cx - size * 0.25, baseY - size * 0.15, size * 0.5, size * 0.15);
+  } else if (fx.kind === "recruit") {
+    if (!state.flags["recruit_" + fx.id]) {
+      const h = HEROES[fx.id];
+      if (h) {
+        const sx = cx - size * 0.4;
+        const sy = baseY - size * 0.9;
+        ctx.drawImage(h.sprite, sx, sy, size * 0.8, size * 0.8);
+      }
+    }
+  } else if (fx.kind === "npc") {
+    ctx.fillStyle = "rgba(58, 36, 24, 1)";
+    ctx.fillRect(cx - size * 0.18, baseY - size * 0.9, size * 0.36, size * 0.3);
+    ctx.fillStyle = "rgba(216, 180, 138, 1)";
+    ctx.fillRect(cx - size * 0.12, baseY - size * 0.6, size * 0.24, size * 0.2);
+    ctx.fillStyle = "rgba(58, 74, 48, 1)";
+    ctx.fillRect(cx - size * 0.25, baseY - size * 0.4, size * 0.5, size * 0.4);
+  } else if (fx.kind === "questitem") {
+    if (!state.flags["got_" + fx.id]) {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      addBloom(cx, baseY - size * 0.35, size * 0.7, "rgba(180,210,255,0.7)");
+      ctx.restore();
+      ctx.fillStyle = "#cfd8e4";
+      ctx.fillRect(cx - 3, baseY - size * 0.4, 6, 6);
+    }
+  } else if (fx.kind === "boss" || fx.kind === "midboss") {
+    // intimidating dark blob ahead
+    ctx.fillStyle = "rgba(160, 30, 30, 0.85)";
+    ctx.fillRect(cx - size * 0.4, baseY - size * 0.95, size * 0.8, size * 0.95);
+  }
+}
+
+function drawCompass(facing) {
+  ctx.save();
+  ctx.fillStyle = "rgba(5,7,12,0.78)";
+  ctx.fillRect(VIEW_W - 44, 4, 40, 26);
+  ctx.fillStyle = "#c2a76a";
+  ctx.font = "bold 9px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  const label = { north: "N", east: "E", south: "S", west: "W" }[facing] || "?";
+  ctx.fillText(label, VIEW_W - 24, 14);
+  ctx.fillStyle = "#7a8898";
+  ctx.font = "8px ui-monospace, monospace";
+  ctx.fillText("3D · V", VIEW_W - 24, 24);
+  ctx.restore();
+  ctx.textAlign = "left";
+}
 
 let _isTouch = null;
 function isTouchDevice() {
