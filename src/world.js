@@ -78,6 +78,11 @@ export const NPCS = [
     has_stone: "\"The Stone! You found it!\" Hithon presses a star-spun robe and 50 silver into your hands. \"Wear it well.\"",
     after: "\"The Stone glimmers again. May it light your way.\"",
   },
+  { x: 14, y: 11, id: "brethil",
+    name: "Brethil the Healer",
+    role: "healer",
+    intro: "[A white-robed elf tends a kettle of athelas.] \"Twenty silver and I will mend you all — body and breath. The fallen, too.\"",
+  },
 ];
 
 // Side-quest item placement.

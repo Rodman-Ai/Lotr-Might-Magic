@@ -908,6 +908,7 @@ function triggerMidBoss(fx, prev) {
     if (outcome === "win") {
       state.flags["mid_" + fx.enemy] = true;
       state.log("gold", "The herald falls. The way is open.");
+      autoSave();
     } else if (outcome === "lose") {
       state.phase = "gameover"; showGameOver(); return;
     }
@@ -917,6 +918,13 @@ function triggerMidBoss(fx, prev) {
     render();
   }});
   showCombatMenu();
+}
+
+function autoSave() {
+  try {
+    localStorage.setItem(SAVE_KEY_PREFIX + "1", JSON.stringify(snapshotState()));
+    state.log("sys", "Auto-saved to slot 1.");
+  } catch (e) {}
 }
 
 function triggerBoss(fx, prev) {
@@ -942,6 +950,7 @@ function combatResolved(outcome) {
   }
   if (state.flags.boss_defeated) {
     state.phase = "victory";
+    autoSave();
     showVictory();
     return;
   }
@@ -967,6 +976,7 @@ function interactAt(x, y) {
 }
 
 function interactNpc(n) {
+  if (n.role === "healer") return interactHealer(n);
   if (n.id === "hithon") {
     const hasStone = state.inventory.lore_stone > 0;
     const done = state.flags["quest_hithon_done"];
@@ -1005,6 +1015,32 @@ function interactNpc(n) {
     state.log("lore", n.intro);
     state.log("sys", n.no_quest_yet);
   }
+}
+
+function interactHealer(n) {
+  const cost = 20;
+  showOverlay(`
+    <h1>${n.name}</h1>
+    <p>${n.intro}</p>
+    <p>Silver: ${state.gold} (cost: ${cost})</p>
+    <div class="row">
+      <button data-pay ${state.gold < cost ? "disabled" : ""}>Pay ${cost}</button>
+      <button data-close>Walk on</button>
+    </div>
+  `, {
+    "[data-pay]": () => {
+      if (state.gold < cost) return;
+      state.gold -= cost;
+      for (const m of state.party) {
+        if (m.dead) { m.dead = false; m.hp = m.maxHp; m.mp = m.maxMp; }
+        else { m.hp = m.maxHp; m.mp = m.maxMp; }
+        m.statuses = (m.statuses || []).filter(s => s.id !== "poison");
+      }
+      state.log("heal", `${n.name} mends the fellowship. The party is whole again.`);
+      hideOverlay();
+    },
+    "[data-close]": () => hideOverlay(),
+  });
 }
 
 function interactQuestItem(q) {
@@ -1885,6 +1921,14 @@ function isViewBlocking(id) {
 // Frames define the inset rectangle of the corridor at each depth, with
 // frames[0] = full canvas and successive frames shrinking toward the
 // vanishing point.
+const REGION_SKY = {
+  bridge:    ["#04060e", "#1a2050"],
+  courtyard: ["#05070e", "#15192a"],
+  interior:  ["#0a0608", "#241612"],
+  grove:     ["#04080a", "#10241a"],
+  cavern:    ["#08040c", "#241430"],
+};
+
 const VIEW_FRAMES = [
   { x0: 0,   y0: 0,   x1: 320, y1: 240 },
   { x0: 48,  y0: 36,  x1: 272, y1: 204 },
@@ -1907,10 +1951,11 @@ function render3D() {
   ctx.save();
   ctx.translate(shakeX, shakeY);
 
-  // Sky / ceiling with subtle horizontal banding.
+  // Sky / ceiling tinted by the region the player stands in.
+  const skyTone = REGION_SKY[combatRegion()] || REGION_SKY.courtyard;
   const ceil = ctx.createLinearGradient(0, 0, 0, VIEW_H / 2);
-  ceil.addColorStop(0, "#05070e");
-  ceil.addColorStop(1, "#15192a");
+  ceil.addColorStop(0, skyTone[0]);
+  ceil.addColorStop(1, skyTone[1]);
   ctx.fillStyle = ceil;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H / 2);
 
@@ -2138,14 +2183,21 @@ function drawForwardProp({ d, fx, tile }) {
   const size = (frame.y1 - next.y1) * 0.9;
   if (fx.kind === "shrine") {
     const lit = !!state.flags[fx.id];
-    ctx.fillStyle = lit ? "rgba(255,200,90,0.9)" : "rgba(150,160,180,0.8)";
-    ctx.fillRect(cx - size * 0.2, baseY - size * 0.6, size * 0.4, size * 0.6);
     if (lit) {
+      // Vertical column of light from ceiling to shrine.
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
-      addBloom(cx, baseY - size * 0.4, size, "rgba(255,200,90,0.6)");
+      const col = ctx.createLinearGradient(cx, frame.y0, cx, baseY);
+      col.addColorStop(0, "rgba(255,210,120,0.0)");
+      col.addColorStop(0.5, "rgba(255,200,100,0.35)");
+      col.addColorStop(1, "rgba(255,180,80,0.6)");
+      ctx.fillStyle = col;
+      ctx.fillRect(cx - size * 0.18, frame.y0, size * 0.36, baseY - frame.y0);
+      addBloom(cx, baseY - size * 0.4, size * 1.4, "rgba(255,200,90,0.55)");
       ctx.restore();
     }
+    ctx.fillStyle = lit ? "rgba(255,200,90,0.9)" : "rgba(150,160,180,0.8)";
+    ctx.fillRect(cx - size * 0.2, baseY - size * 0.6, size * 0.4, size * 0.6);
   } else if (fx.kind === "chest") {
     const opened = state.flags["chest_" + fx.x + "_" + fx.y];
     ctx.fillStyle = opened ? "rgba(50,30,18,0.9)" : "rgba(120,80,40,0.95)";
