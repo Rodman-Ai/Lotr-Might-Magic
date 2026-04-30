@@ -117,6 +117,13 @@ html, body {
   width: 28px; height: 28px;
   background: #000; border: 1px solid #2a2f43;
   image-rendering: pixelated;
+  animation: portraitBreath 3.6s ease-in-out infinite;
+  transform-origin: center bottom;
+}
+.member.dead .portrait { animation: none; }
+@keyframes portraitBreath {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-1px) scaleY(0.97); }
 }
 .member .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .member .name { color: var(--accent-2); font-weight: 700; }

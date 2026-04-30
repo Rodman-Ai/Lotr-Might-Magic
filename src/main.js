@@ -1051,6 +1051,10 @@ function interactQuestItem(q) {
   state.flags["got_" + q.id] = true;
   state.inventory[q.id] = (state.inventory[q.id] || 0) + 1;
   state.log("lore", q.flavor);
+  worldFloats.push({
+    text: q.name, color: "rgba(180,210,255,ALPHA)",
+    born: animTime, dur: 1500,
+  });
 }
 
 function interactCampfire(cf) {
@@ -1133,15 +1137,26 @@ function interactChest(c) {
     return;
   }
   state.flags[k] = true;
+  let delay = 0;
   for (const it of c.items) {
-    if (it.id === "gold") { state.gold += it.n; state.log("gold", `Found ${it.n} silver.`); }
+    let label;
+    if (it.id === "gold") { state.gold += it.n; state.log("gold", `Found ${it.n} silver.`); label = `+${it.n} silver`; }
     else if (it.id.startsWith("equip:")) {
       const eqid = it.id.slice("equip:".length);
       state.inventory["eq:" + eqid] = (state.inventory["eq:" + eqid] || 0) + it.n;
       state.log("gold", `Found ${EQUIPMENT[eqid].name}.`);
+      label = EQUIPMENT[eqid].name;
     } else if (ITEMS[it.id]) {
       state.inventory[it.id] = (state.inventory[it.id] || 0) + it.n;
       state.log("gold", `Found ${it.n} × ${ITEMS[it.id].name}.`);
+      label = `${ITEMS[it.id].name} ×${it.n}`;
+    }
+    if (label) {
+      worldFloats.push({
+        text: label, color: "rgba(194,167,106,ALPHA)",
+        born: animTime + delay, dur: 1400,
+      });
+      delay += 250;
     }
   }
 }
@@ -1215,6 +1230,7 @@ function pickWeakestEnemyIdx() {
 }
 
 let combatQuickUseItem = null;
+let combatRepeatSpell = null;
 
 function showCombatMenu() {
   const c = state.combat;
@@ -1232,6 +1248,36 @@ function showCombatMenu() {
     idx++;
     step();
   };
+  combatRepeatSpell = () => {
+    if (idx >= livingParty.length) return;
+    const actor = livingParty[idx];
+    const sid = actor.lastSpell;
+    if (!sid || !actor.spells.includes(sid)) {
+      state.log("sys", `${actor.name} has no spell to repeat.`);
+      return;
+    }
+    const sp = SPELLS[sid];
+    if (actor.mp < sp.mp) {
+      state.log("sys", `${actor.name} lacks the strength to cast ${sp.name}.`);
+      return;
+    }
+    if (sp.target === "ally") {
+      // Repeat on a wounded ally (lowest HP%).
+      let bestI = 0, bestK = Infinity;
+      for (let i = 0; i < state.party.length; i++) {
+        if (state.party[i].dead) continue;
+        const k = state.party[i].hp / state.party[i].maxHp;
+        if (k < bestK) { bestK = k; bestI = i; }
+      }
+      plan[idx] = { kind: "spell", spellId: sid, targetIdx: bestI };
+    } else {
+      const t = pickWeakestEnemyIdx();
+      if (t < 0) return;
+      plan[idx] = { kind: "spell", spellId: sid, targetIdx: t };
+    }
+    idx++;
+    step();
+  };
 
   function step() {
     if (idx >= livingParty.length) {
@@ -1240,8 +1286,9 @@ function showCombatMenu() {
       return;
     }
     const actor = livingParty[idx];
+    const weakIcon = (w) => w === "holy" ? " ☼" : w === "lightning" ? " ⚡" : "";
     const enemyButtons = c.enemies.map((e, i) =>
-      e.hp > 0 ? `<button data-eid="${i}">${e.name} (${e.hp}/${e.maxHp})</button>` : "").join("");
+      e.hp > 0 ? `<button data-eid="${i}">${e.name}${weakIcon(e.weak)} (${e.hp}/${e.maxHp})</button>` : "").join("");
     const allyButtons = state.party.map((m, i) =>
       !m.dead ? `<button data-aid="${i}">${m.name} (${m.hp}/${m.maxHp})</button>` : "").join("");
 
@@ -1301,11 +1348,26 @@ function showCombatMenu() {
     }
     function showSpellPicker(_actor) {
       const sub = overlayEl.querySelector("#sub");
-      sub.innerHTML = `<h2>Spell</h2><div class="row">${spellOptions}</div>`;
+      const repeat = actor.lastSpell && actor.spells.includes(actor.lastSpell)
+        ? `<button data-repeat>Repeat: ${SPELLS[actor.lastSpell].name} (R)</button>`
+        : "";
+      sub.innerHTML = `<h2>Spell</h2><div class="row">${repeat}${spellOptions}</div>`;
+      const reBtn = sub.querySelector("[data-repeat]");
+      if (reBtn) reBtn.addEventListener("click", () => repeatLast(actor.lastSpell));
+      function repeatLast(sid) {
+        const sp = SPELLS[sid];
+        if (sp.target === "ally") pickAllyTarget(aid => commit({ kind: "spell", spellId: sid, targetIdx: aid }));
+        else {
+          const t = pickWeakestEnemyIdx();
+          if (t < 0) return;
+          commit({ kind: "spell", spellId: sid, targetIdx: t });
+        }
+      }
       for (const b of sub.querySelectorAll("button[data-spell]")) {
         b.addEventListener("click", () => {
           const sid = b.dataset.spell;
           const sp = SPELLS[sid];
+          actor.lastSpell = sid;
           if (sp.target === "ally") pickAllyTarget(aid => commit({ kind: "spell", spellId: sid, targetIdx: aid }));
           else pickEnemyTargetForSpell(sid);
         });
@@ -1717,6 +1779,10 @@ window.addEventListener("keydown", (ev) => {
         .map(([id]) => id);
       const id = owned[slot];
       if (id && combatQuickUseItem) combatQuickUseItem(id);
+      ev.preventDefault();
+    }
+    if (state.combat.phase === "command" && (ev.key === "r" || ev.key === "R")) {
+      if (combatRepeatSpell) combatRepeatSpell();
       ev.preventDefault();
     }
     return;
