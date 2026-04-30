@@ -297,6 +297,9 @@ function render() {
     drawWalkingBody(leaderSprite, drawX, drawY, moving ? animTime : 0);
   }
 
+  // World-space floating reward text rises from the player.
+  renderWorldFloats(camPx, camPy);
+
   ctx.restore();
 
   // ----- Lighting pass: night veil with player + shrine + brazier holes -----
@@ -853,6 +856,8 @@ function tryMove(dx, dy) {
     toPx: nx * TILE, toPy: ny * TILE,
     start: animTime, dur: WALK_DUR,
   };
+  // Footstep dust puff at the tile just left behind (2D mode only).
+  if (viewMode === "2d") spawnFootstepDust(ox, oy);
   state.player.x = nx; state.player.y = ny;
   state.steps++;
 
@@ -1858,6 +1863,16 @@ function render3D() {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
+  // Combat shake also wobbles the first-person frame.
+  let shakeX = 0, shakeY = 0;
+  if (animTime < fx.shake.until) {
+    const k = (fx.shake.until - animTime) / 200;
+    shakeX = (Math.random() - 0.5) * fx.shake.mag * k;
+    shakeY = (Math.random() - 0.5) * fx.shake.mag * k;
+  }
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
   // Sky / ceiling with subtle horizontal banding.
   const ceil = ctx.createLinearGradient(0, 0, 0, VIEW_H / 2);
   ceil.addColorStop(0, "#05070e");
@@ -1946,15 +1961,35 @@ function render3D() {
   visibleProps.sort((a, b) => b.d - a.d);
   for (const p of visibleProps) drawForwardProp(p);
 
-  // Compass + facing indicator at the top.
-  drawCompass(state.player.facing);
-
   // Vignette + lighting darken corners.
   const grd = ctx.createRadialGradient(160, 120, 60, 160, 120, 200);
   grd.addColorStop(0, "rgba(0,0,0,0)");
   grd.addColorStop(1, "rgba(0,0,0,0.7)");
   ctx.fillStyle = grd;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  ctx.restore();
+
+  // Floating reward text renders centered for the first-person view.
+  if (worldFloats.length) {
+    ctx.save();
+    ctx.font = "bold 11px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    let i = 0;
+    for (const f of worldFloats) {
+      const t = (animTime - f.born) / f.dur;
+      if (t < 0 || t > 1) continue;
+      const a = (1 - t);
+      ctx.fillStyle = f.color.replace("ALPHA", a.toFixed(2));
+      ctx.fillText(f.text, VIEW_W / 2, VIEW_H / 2 - 30 - t * 24 - i * 12);
+      i++;
+    }
+    ctx.restore();
+    ctx.textAlign = "left";
+  }
+
+  // Compass + UI overlays render in screen-space (no shake).
+  drawCompass(state.player.facing);
 
   if (state.combat) renderCombatVeil(0, 0);
   if (miniMapOpen) renderMiniMap();
@@ -2123,15 +2158,35 @@ function drawForwardProp({ d, fx, tile }) {
 function drawCompass(facing) {
   ctx.save();
   ctx.fillStyle = "rgba(5,7,12,0.78)";
-  ctx.fillRect(VIEW_W - 44, 4, 40, 26);
-  ctx.fillStyle = "#c2a76a";
-  ctx.font = "bold 9px ui-monospace, monospace";
-  ctx.textAlign = "center";
-  const label = { north: "N", east: "E", south: "S", west: "W" }[facing] || "?";
-  ctx.fillText(label, VIEW_W - 24, 14);
+  ctx.fillRect(VIEW_W - 44, 4, 40, 40);
+  // Center of compass disc.
+  const cx = VIEW_W - 24, cy = 22;
+  ctx.fillStyle = "#1a1f30";
+  ctx.beginPath(); ctx.arc(cx, cy, 12, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#3a3f55";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, 12, 0, Math.PI * 2); ctx.stroke();
+  // Cardinal ticks.
   ctx.fillStyle = "#7a8898";
-  ctx.font = "8px ui-monospace, monospace";
-  ctx.fillText("3D · V", VIEW_W - 24, 24);
+  ctx.font = "6px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("N", cx, cy - 6);
+  ctx.fillText("S", cx, cy + 10);
+  ctx.fillText("W", cx - 8, cy + 2);
+  ctx.fillText("E", cx + 8, cy + 2);
+  // Pointing arrow toward facing.
+  const ang = { north: -Math.PI / 2, east: 0, south: Math.PI / 2, west: Math.PI }[facing] || 0;
+  ctx.fillStyle = "#c2a76a";
+  ctx.beginPath();
+  ctx.moveTo(cx + Math.cos(ang) * 9, cy + Math.sin(ang) * 9);
+  ctx.lineTo(cx + Math.cos(ang + 2.5) * 4, cy + Math.sin(ang + 2.5) * 4);
+  ctx.lineTo(cx + Math.cos(ang - 2.5) * 4, cy + Math.sin(ang - 2.5) * 4);
+  ctx.closePath();
+  ctx.fill();
+  // Mode hint below.
+  ctx.fillStyle = "#7a8898";
+  ctx.font = "7px ui-monospace, monospace";
+  ctx.fillText("3D · V", cx, cy + 19);
   ctx.restore();
   ctx.textAlign = "left";
 }
@@ -2206,8 +2261,26 @@ function emitFx(kind, payload) {
       fx.dissolves.push({ x: baseX, y: baseY, born: animTime, dur: 600 });
       break;
     }
+    case "reward_float": {
+      // Float XP and gold above the player after victory (world space in 2D,
+      // screen space in 3D — we render both via worldFloats).
+      worldFloats.push({
+        text: `+${payload.xp} XP`,
+        color: "rgba(255,220,90,ALPHA)",
+        born: animTime, dur: 1500,
+      });
+      worldFloats.push({
+        text: `+${payload.gold} silver`,
+        color: "rgba(255,200,90,ALPHA)",
+        born: animTime + 200, dur: 1500,
+      });
+      break;
+    }
   }
 }
+
+// Floating texts in the world (XP, gold, etc.).
+const worldFloats = [];
 state.emitFx = emitFx;
 
 // ----- Particle system (mist) ---------------------------------------------
@@ -2252,6 +2325,50 @@ function updateParticles(dt) {
   fx.spells = fx.spells.filter(s => animTime - s.born < s.dur);
   fx.dissolves = fx.dissolves.filter(d => animTime - d.born < d.dur);
   for (const [k, t] of fx.hitFlash) if (t < animTime) fx.hitFlash.delete(k);
+  // Reap world floats (XP / gold rewards).
+  for (let i = worldFloats.length - 1; i >= 0; i--) {
+    if (animTime - worldFloats[i].born > worldFloats[i].dur) worldFloats.splice(i, 1);
+  }
+}
+
+function renderWorldFloats(camPx, camPy) {
+  if (!worldFloats.length) return;
+  ctx.save();
+  ctx.font = "bold 9px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  const baseX = state.player.x * TILE + 8 - camPx;
+  const baseY = state.player.y * TILE - camPy;
+  let i = 0;
+  for (const f of worldFloats) {
+    const t = (animTime - f.born) / f.dur;
+    if (t < 0 || t > 1) continue;
+    const a = (1 - t) * (t < 0.1 ? t / 0.1 : 1);
+    const yoff = -t * 32 - i * 10;
+    ctx.fillStyle = f.color.replace("ALPHA", a.toFixed(2));
+    ctx.fillText(f.text, baseX, baseY + yoff);
+    i++;
+  }
+  ctx.restore();
+  ctx.textAlign = "left";
+}
+
+function spawnFootstepDust(tileX, tileY) {
+  // Only kick up dust on dry ground tiles (path / floor / bridge).
+  const t = state.grid[tileY]?.[tileX];
+  if (t !== TILES.PATH && t !== TILES.FLOOR && t !== TILES.BRIDGE) return;
+  const baseX = tileX * TILE + 8;
+  const baseY = tileY * TILE + 14;
+  for (let i = 0; i < 3; i++) {
+    particles.push({
+      x: baseX + (Math.random() - 0.5) * 6,
+      y: baseY + Math.random() * 2,
+      vx: (Math.random() - 0.5) * 6,
+      vy: -2 - Math.random() * 4,
+      size: 1,
+      alpha: 0.3 + Math.random() * 0.2,
+      t: 0, life: 350 + Math.random() * 250,
+    });
+  }
 }
 
 function spawnEmbers() {

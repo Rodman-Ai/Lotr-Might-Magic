@@ -236,6 +236,7 @@ function endCombat(state, outcome) {
     }
     state.gold += gold;
     state.log("gold", `Victory. ${each} XP each, ${gold} silver.`);
+    state.emitFx?.("reward_float", { xp: each, gold });
     if (c.boss && c.enemies.some(e => e.id === "nazgul")) state.flags.boss_defeated = true;
   } else if (outcome === "lose") {
     state.log("hit", "Your party falls. Darkness takes Rivendell.");
