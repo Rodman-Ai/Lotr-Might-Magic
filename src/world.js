@@ -83,6 +83,13 @@ export const NPCS = [
     role: "healer",
     intro: "[A white-robed elf tends a kettle of athelas.] \"Twenty silver and I will mend you all — body and breath. The fallen, too.\"",
   },
+  { x: 22, y: 17, id: "lindir",
+    name: "Lindir the Loremaster",
+    intro: "[A slender minstrel turns from a charred bookshelf.] \"Bilbo's Old Map — last I saw it, it lay on the gravestones. If you find it, return it; I'll set Glamdring's Echo in your hand.\"",
+    no_quest_yet: "\"Search the grove. Beneath the broken stone where Bilbo would rest.\"",
+    has_map: "Lindir unwraps a long blade. \"Glamdring's Echo — forged from the splinters of the great sword. Strike well.\" (+ equipment, +30 silver, +30 XP each)",
+    after: "\"My library is half its old self, but the map is safe. Thank you.\"",
+  },
 ];
 
 // Side-quest item placement.
@@ -90,6 +97,9 @@ export const QUEST_ITEMS = [
   { x: 22, y: 28, id: "lore_stone", name: "Lost Lore Stone",
     desc: "A pale stone, faintly glowing.",
     flavor: "You lift the Lore Stone. It hums in your hand." },
+  { x: 31, y: 30, id: "bilbo_map", name: "Bilbo's Old Map",
+    desc: "A folded vellum chart, edges nibbled by mice.",
+    flavor: "You unfold a faded map. Bilbo's hand has marked roads to Erebor." },
 ];
 
 // Campfires - safe rest spots, fully restore the party (once per visit).

@@ -318,6 +318,7 @@ function render() {
   if (state.combat) renderCombatVeil(shakeX, shakeY);
 
   if (miniMapOpen) renderMiniMap();
+  renderModeToast();
 
   renderHUD();
 }
@@ -977,6 +978,7 @@ function interactAt(x, y) {
 
 function interactNpc(n) {
   if (n.role === "healer") return interactHealer(n);
+  if (n.id === "lindir") return interactLindir(n);
   if (n.id === "hithon") {
     const hasStone = state.inventory.lore_stone > 0;
     const done = state.flags["quest_hithon_done"];
@@ -1015,6 +1017,26 @@ function interactNpc(n) {
     state.log("lore", n.intro);
     state.log("sys", n.no_quest_yet);
   }
+}
+
+function interactLindir(n) {
+  if (state.flags["quest_lindir_done"]) {
+    state.log("lore", n.after);
+    return;
+  }
+  if (state.inventory.bilbo_map > 0) {
+    state.flags["quest_lindir_done"] = true;
+    state.inventory.bilbo_map = 0;
+    state.gold += 30;
+    state.inventory["eq:glamdrings_echo"] = (state.inventory["eq:glamdrings_echo"] || 0) + 1;
+    for (const m of state.party) m.xp += 30;
+    state.log("lore", n.has_map);
+    state.log("gold", "Glamdring's Echo added to the pack. (+30 silver, +30 XP each)");
+    worldFloats.push({ text: "Glamdring's Echo", color: "rgba(194,167,106,ALPHA)", born: animTime, dur: 1500 });
+    return;
+  }
+  state.log("lore", n.intro);
+  state.log("sys", n.no_quest_yet);
 }
 
 function interactHealer(n) {
@@ -1664,12 +1686,19 @@ function showQuests() {
     : (state.inventory.lore_stone > 0
         ? "<b>Return the Lore Stone to Hithon</b> at the bridge."
         : "Find the <b>Lost Lore Stone</b> in the burial grove.");
+  const mapStatus = state.flags["quest_lindir_done"]
+    ? "<b>Complete</b> — Bilbo's map is in safe hands."
+    : (state.inventory.bilbo_map > 0
+        ? "<b>Return Bilbo's Old Map to Lindir</b> in the Last Homely House."
+        : "Find <b>Bilbo's Old Map</b> in the burial grove for Lindir.");
   showOverlay(`
     <h1>Journal</h1>
     <h2>Main Quest</h2>
     <p>Kindle the three shrines: <b>${lit}/3</b>. Then descend to the cavern beneath the Vale.</p>
     <h2>Hithon's Lore Stone</h2>
     <p>${stoneStatus}</p>
+    <h2>Lindir's Old Map</h2>
+    <p>${mapStatus}</p>
     <div class="row"><button data-close>Close</button></div>
   `, { "[data-close]": () => hideOverlay() });
 }
@@ -1811,7 +1840,29 @@ function toggleViewMode() {
   viewMode = (viewMode === "2d") ? "3d" : "2d";
   // Cancel any in-flight walk tween so view switching is clean.
   walk = null;
+  modeToast = {
+    text: viewMode === "3d" ? "First-Person View" : "Top-Down View",
+    born: animTime, dur: 1100,
+  };
   state.log("sys", `View: ${viewMode === "3d" ? "first-person" : "top-down"}.`);
+}
+
+let modeToast = null;
+
+function renderModeToast() {
+  if (!modeToast) return;
+  const t = (animTime - modeToast.born) / modeToast.dur;
+  if (t < 0 || t > 1) { modeToast = null; return; }
+  const a = t < 0.15 ? t / 0.15 : (t > 0.85 ? (1 - t) / 0.15 : 1);
+  ctx.save();
+  ctx.fillStyle = `rgba(5,7,12,${(0.7 * a).toFixed(2)})`;
+  ctx.fillRect(VIEW_W / 2 - 70, 18, 140, 18);
+  ctx.fillStyle = `rgba(194,167,106,${a.toFixed(2)})`;
+  ctx.font = "bold 11px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  ctx.fillText(modeToast.text, VIEW_W / 2, 31);
+  ctx.restore();
+  ctx.textAlign = "left";
 }
 
 // Direction-input dispatcher that respects the active view mode.
@@ -2138,6 +2189,7 @@ function render3D() {
 
   if (state.combat) renderCombatVeil(0, 0);
   if (miniMapOpen) renderMiniMap();
+  renderModeToast();
   renderHUD();
 }
 
@@ -2179,6 +2231,8 @@ function drawFrontWall(frame, tile, d) {
       ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
     }
   }
+  // Region-flavored wall accents.
+  drawWallAccents(frame, d, tile);
   // Tree silhouette overlay.
   if (tile === TILES.TREE) {
     ctx.fillStyle = "rgba(20,30,20,0.5)";
@@ -2191,6 +2245,39 @@ function drawFrontWall(frame, tile, d) {
     ctx.fillStyle = "rgba(40,40,60,0.6)";
     const cx = (frame.x0 + frame.x1) / 2;
     ctx.fillRect(cx - w * 0.18, frame.y0 + h * 0.25, w * 0.36, h * 0.6);
+  }
+}
+
+function drawWallAccents(frame, d, tile) {
+  if (tile !== TILES.WALL) return;
+  const region = combatRegion();
+  const w = frame.x1 - frame.x0, h = frame.y1 - frame.y0;
+  if (region === "interior") {
+    // Greenish lichen patches on interior walls.
+    ctx.fillStyle = `rgba(80, 130, 90, ${(0.35 - d * 0.06).toFixed(2)})`;
+    const seed = Math.floor((frame.x0 + frame.y0) * 7919) % 5;
+    for (let i = 0; i < 4; i++) {
+      const px = frame.x0 + ((i * 37 + seed * 13) % w) * 0.85;
+      const py = frame.y0 + ((i * 53 + seed * 17) % h) * 0.7 + h * 0.15;
+      ctx.fillRect(Math.round(px), Math.round(py), 3, 2);
+      ctx.fillRect(Math.round(px) + 1, Math.round(py) + 2, 2, 1);
+    }
+  } else if (region === "cavern") {
+    // Drips of pale water on cavern walls.
+    ctx.fillStyle = `rgba(180, 200, 240, ${(0.25 - d * 0.05).toFixed(2)})`;
+    for (let i = 0; i < 3; i++) {
+      const px = frame.x0 + (i * 47 + (frame.x0 % 17)) % w;
+      const py = frame.y0 + ((animTime / 30 + i * 23) % (h - 6));
+      ctx.fillRect(Math.round(px), Math.round(py), 1, 4);
+    }
+  } else if (region === "grove") {
+    // Pale fungus along the base.
+    ctx.fillStyle = `rgba(220, 200, 160, ${(0.25 - d * 0.05).toFixed(2)})`;
+    for (let i = 0; i < 4; i++) {
+      const px = frame.x0 + (i * 41 + (frame.y0 % 11)) % w;
+      const py = frame.y1 - 2 - (i % 2) * 2;
+      ctx.fillRect(Math.round(px), Math.round(py), 2, 1);
+    }
   }
 }
 

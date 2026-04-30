@@ -9,6 +9,7 @@ export const EQUIPMENT = {
   hallowed_axe:   { slot: "weapon", name: "Hallowed Axe",       atk: 5, classKinds: ["warrior"] },
   staff_of_lore:  { slot: "weapon", name: "Staff of Lore",      atk: 1, mp: 8, classKinds: ["mage"] },
   silver_dagger:  { slot: "weapon", name: "Silver Dagger",      atk: 3, classKinds: ["archer", "warrior"] },
+  glamdrings_echo:{ slot: "weapon", name: "Glamdring's Echo",   atk: 7, classKinds: ["warrior"] },
   // Armor
   leather_jerkin: { slot: "armor", name: "Leather Jerkin",      def: 2, hp: 6 },
   mithril_shirt:  { slot: "armor", name: "Mithril Shirt",       def: 4, hp: 10 },
