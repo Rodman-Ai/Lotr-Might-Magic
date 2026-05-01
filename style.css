@@ -221,14 +221,15 @@ html, body {
   gap: 16px;
 }
 #dpad {
-  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 4px;
   width: 168px;
   height: 168px;
   flex: 0 0 auto;
 }
 #dpad .dp {
-  position: absolute;
-  width: 56px; height: 56px;
   background: #1c2334;
   color: var(--ink);
   border: 1px solid #2a2f43;
@@ -240,12 +241,14 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   user-select: none;
   -webkit-user-select: none;
+  padding: 0;
+  min-width: 0;
 }
 #dpad .dp:active { background: #2f395a; }
-#dpad .up    { top: 0;   left: 56px; }
-#dpad .down  { top: 112px; left: 56px; }
-#dpad .left  { top: 56px; left: 0; }
-#dpad .right { top: 56px; left: 112px; }
+#dpad .up    { grid-column: 2; grid-row: 1; }
+#dpad .left  { grid-column: 1; grid-row: 2; }
+#dpad .right { grid-column: 3; grid-row: 2; }
+#dpad .down  { grid-column: 2; grid-row: 3; }
 
 #actions {
   display: grid;
@@ -320,10 +323,7 @@ html, body {
   .member .stats { font-size: 8px; }
 
   #dpad { width: 132px; height: 132px; }
-  #dpad .dp { width: 44px; height: 44px; }
-  #dpad .up    { left: 44px; }
-  #dpad .down  { top: 88px; left: 44px; }
-  #dpad .right { left: 88px; }
+  #dpad .dp { font-size: 16px; }
   #touch { gap: 8px; align-items: stretch; }
   #actions {
     flex: 1 1 auto;
