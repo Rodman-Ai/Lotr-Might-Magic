@@ -249,8 +249,8 @@ html, body {
 
 #actions {
   display: grid;
-  grid-template-columns: repeat(2, auto);
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
   align-items: center;
 }
 .ab {
@@ -258,40 +258,44 @@ html, body {
   color: var(--ink);
   border: 1px solid #2a2f43;
   border-radius: 6px;
-  padding: 0 14px;
+  padding: 0 8px;
   font-family: inherit;
-  font-size: 14px;
-  height: 44px;
-  min-width: 64px;
+  font-size: 13px;
+  height: 40px;
+  min-width: 0;
   cursor: pointer;
   touch-action: manipulation;
+  white-space: nowrap;
 }
 .ab:active { background: #2f395a; }
 .ab[data-act="interact"] {
-  grid-column: span 2;
-  height: 60px;
+  grid-column: 1 / -1;
+  height: 52px;
   font-size: 22px;
   background: #2a3a58;
   border-color: #3a4868;
   color: var(--accent-2);
 }
 .ab[data-act="interact"]:active { background: #3a4868; }
-.ab.small { font-size: 12px; height: 36px; min-width: 56px; padding: 0 8px; }
+.ab.small { font-size: 12px; height: 34px; padding: 0 6px; }
 
 /* ----- Mobile / coarse pointer breakpoint ----- */
 @media (max-width: 880px) {
-  #app { padding: 6px; gap: 8px; }
+  #app {
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+    gap: 6px;
+  }
   #frame {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto;
     padding: 6px;
-    gap: 6px;
+    gap: 4px;
   }
-  #hud { width: 100%; }
-  #party { font-size: 11px; padding: 6px; }
+  #hud { width: 100%; gap: 4px; }
+  #party { font-size: 11px; padding: 5px; gap: 4px; }
   .member { padding: 3px; }
   .member .stats { font-size: 9px; }
-  #log { max-height: 140px; min-height: 60px; font-size: 11px; }
+  #log { max-height: 90px; min-height: 50px; font-size: 11px; padding: 6px; }
   #controls { display: none; }
   #overlay { padding: 10px; font-size: 13px; }
   #overlay h1 { font-size: 18px; }
@@ -315,13 +319,18 @@ html, body {
   .member .name { font-size: 11px; }
   .member .stats { font-size: 8px; }
 
-  #dpad { width: 144px; height: 144px; }
-  #dpad .dp { width: 48px; height: 48px; }
-  #dpad .up    { left: 48px; }
-  #dpad .down  { top: 96px; left: 48px; }
-  #dpad .right { left: 96px; }
-  #touch { gap: 8px; }
-  .ab { min-width: 52px; height: 40px; padding: 0 8px; }
-  .ab[data-act="interact"] { height: 52px; font-size: 18px; }
-  .ab.small { font-size: 11px; height: 32px; min-width: 48px; }
+  #dpad { width: 132px; height: 132px; }
+  #dpad .dp { width: 44px; height: 44px; }
+  #dpad .up    { left: 44px; }
+  #dpad .down  { top: 88px; left: 44px; }
+  #dpad .right { left: 88px; }
+  #touch { gap: 8px; align-items: stretch; }
+  #actions {
+    flex: 1 1 auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .ab { height: 36px; padding: 0 4px; font-size: 12px; }
+  .ab[data-act="interact"] { height: 40px; font-size: 18px; }
+  .ab.small { font-size: 11px; height: 30px; padding: 0 4px; }
 }
