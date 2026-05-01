@@ -193,6 +193,23 @@ html, body {
 }
 #controls b { color: var(--accent-2); }
 
+/* Version pinned to the bottom-right of the canvas, visible in every
+   game state (title, 2D, 3D, combat). Sits above the menu overlay. */
+#version {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  font: 9px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: var(--accent-2);
+  background: rgba(5, 7, 12, 0.6);
+  padding: 1px 5px;
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 20;
+  letter-spacing: 0.4px;
+  opacity: 0.9;
+}
+
 /* ----- Touch controls ----- */
 #touch {
   display: none;
