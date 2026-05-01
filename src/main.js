@@ -2046,13 +2046,80 @@ const REGION_SKY = {
   cavern:    ["#08040c", "#241430"],
 };
 
-const VIEW_FRAMES = [
-  { x0: 0,   y0: 0,   x1: 320, y1: 240 },
-  { x0: 48,  y0: 36,  x1: 272, y1: 204 },
-  { x0: 96,  y0: 72,  x1: 224, y1: 168 },
-  { x0: 132, y0: 100, x1: 188, y1: 140 },
-  { x0: 152, y0: 114, x1: 168, y1: 126 },
-];
+// Per-region floor palette: [near base, far base, accent].
+const REGION_FLOOR = {
+  bridge:    ["#1a2050", "#0a1230", "#3a4a78"],
+  courtyard: ["#3a3530", "#1a181a", "#4a443c"],
+  interior:  ["#3a342a", "#16120e", "#4a4234"],
+  grove:     ["#1a2a1c", "#08120a", "#243a26"],
+  cavern:    ["#3a342a", "#0e0a0e", "#5a5040"],
+};
+
+function drawFloorBackdrop() {
+  const region = combatRegion();
+  const pal = REGION_FLOOR[region] || REGION_FLOOR.courtyard;
+  const grad = ctx.createLinearGradient(0, VIEW_H / 2, 0, VIEW_H);
+  grad.addColorStop(0, pal[1]);
+  grad.addColorStop(1, pal[0]);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, VIEW_H / 2, VIEW_W, VIEW_H / 2);
+
+  // Tile rows that recede toward the vanishing point. Spacing widens as
+  // the row approaches the camera, so the floor reads as receding tiles.
+  ctx.strokeStyle = "rgba(0,0,0,0.45)";
+  ctx.lineWidth = 1;
+  const cy = VIEW_H / 2;
+  const baseRows = 8;
+  for (let i = 1; i <= baseRows; i++) {
+    const t = i / baseRows;
+    // 1 / (1 - t * 0.85) gives a sharp foreshortening curve.
+    const k = 1 / (1 - t * 0.92);
+    const y = cy + (VIEW_H - cy) * (k - 1) / (1 / 0.08 - 1);
+    if (y > VIEW_H) break;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(VIEW_W, y); ctx.stroke();
+  }
+  // Vanishing-point radial lines anchor depth.
+  ctx.strokeStyle = "rgba(0,0,0,0.45)";
+  for (let i = 0; i <= 12; i++) {
+    const x = i * (VIEW_W / 12);
+    ctx.beginPath();
+    ctx.moveTo(x, VIEW_H);
+    ctx.lineTo(VIEW_W / 2, cy);
+    ctx.stroke();
+  }
+  // Speckle accent pixels for texture.
+  ctx.fillStyle = pal[2];
+  for (let i = 0; i < 80; i++) {
+    const t = (i * 13 % 100) / 100;
+    const k = 1 / (1 - t * 0.85);
+    const y = cy + (VIEW_H - cy) * (k - 1) / (1 / 0.15 - 1);
+    if (y > VIEW_H || y < cy + 4) continue;
+    const xs = ((i * 41 + Math.floor(animTime / 60) % 23) % VIEW_W);
+    const dotW = Math.max(1, Math.round((y - cy) / 60));
+    ctx.fillRect(xs, Math.round(y), dotW, 1);
+  }
+}
+
+// Frustum frames per depth. frame[0] = full canvas, each subsequent
+// frame is inset further toward the vanishing point (160, 120).
+// Six visible depth slices reach far enough to anchor open rooms.
+const VIEW_FRAMES = (() => {
+  const out = [{ x0: 0, y0: 0, x1: 320, y1: 240 }];
+  // Insets follow a 1/(d+1) falloff so distant tiles compress smoothly.
+  for (let d = 1; d <= 6; d++) {
+    const k = 1 - 1 / (d + 1.2);  // 0..1
+    const xInset = k * 156;
+    const yInset = k * 116;
+    out.push({
+      x0: Math.round(xInset),
+      y0: Math.round(yInset),
+      x1: Math.round(320 - xInset),
+      y1: Math.round(240 - yInset),
+    });
+  }
+  return out;
+})();
+const MAX_DEPTH = VIEW_FRAMES.length - 1;
 
 function render3D() {
   ctx.fillStyle = "#000";
@@ -2077,38 +2144,22 @@ function render3D() {
   ctx.fillRect(0, 0, VIEW_W, VIEW_H / 2);
 
   // Floor (perspective shading toward vanishing point).
-  for (let y = VIEW_H / 2; y < VIEW_H; y++) {
-    const t = (y - VIEW_H / 2) / (VIEW_H / 2);
-    const r = Math.round(20 + t * 30);
-    const g = Math.round(20 + t * 26);
-    const b = Math.round(28 + t * 14);
-    ctx.fillStyle = `rgb(${r},${g},${b})`;
-    ctx.fillRect(0, y, VIEW_W, 1);
-  }
-  // Floor herringbone hint.
-  ctx.strokeStyle = "rgba(0,0,0,0.25)";
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 6; i++) {
-    const y = VIEW_H / 2 + i * 18 + 6;
-    ctx.beginPath();
-    ctx.moveTo(0, y); ctx.lineTo(VIEW_W, y); ctx.stroke();
-  }
-  // Vanishing point lines on the floor.
-  ctx.strokeStyle = "rgba(0,0,0,0.4)";
-  for (let i = 0; i <= 8; i++) {
-    const x = i * 40;
-    ctx.beginPath();
-    ctx.moveTo(x, VIEW_H);
-    ctx.lineTo(160, VIEW_H / 2);
-    ctx.stroke();
-  }
+  drawFloorBackdrop();
 
   const dirVec = facingVector(state.player.facing);
   const lvec = leftVector(state.player.facing);
 
+  // Slight forward "lurch" while a walk tween is in flight: zooms the
+  // frustum a fraction of a tile, giving the impression of stepping.
+  let stepShift = 0;
+  if (walk && viewMode === "3d") {
+    const t = (animTime - walk.start) / walk.dur;
+    if (t >= 0 && t < 1) stepShift = 1 - t; // 1 → 0 over the step
+    else walk = null;
+  }
+
   // Collect entities to draw at each depth (with side: -1 left, 0 forward, +1 right).
-  const visibleProps = []; // { d, side, kind, payload }
-  const facingForward = (d) => [state.player.x + dirVec[0] * d, state.player.y + dirVec[1] * d];
+  const visibleProps = [];
   function tileAt(x, y) {
     if (!inBounds(x, y)) return null;
     let id = state.grid[y][x];
@@ -2122,40 +2173,96 @@ function render3D() {
     return id;
   }
 
-  // Far-to-near, so closer panels paint over farther ones.
-  for (let d = 4; d >= 1; d--) {
-    const [tx, ty] = facingForward(d);
-    if (!inBounds(tx, ty)) continue;
-    const tile = tileAt(tx, ty);
-
-    // Side walls between (d-1) and (d).
-    const ltx = tx + lvec[0], lty = ty + lvec[1];
-    const ltile = tileAt(ltx, lty);
-    if (isViewBlocking(ltile)) {
-      drawSideWall(VIEW_FRAMES[d - 1], VIEW_FRAMES[d], "left", ltile, d);
-    }
-    const rtx = tx - lvec[0], rty = ty - lvec[1];
-    const rtile = tileAt(rtx, rty);
-    if (isViewBlocking(rtile)) {
-      drawSideWall(VIEW_FRAMES[d - 1], VIEW_FRAMES[d], "right", rtile, d);
-    }
-
-    // Entity props on side tiles (recruits, NPCs, chests etc.) - simplified, only forward axis.
-
-    if (isViewBlocking(tile)) {
-      drawFrontWall(VIEW_FRAMES[d], tile, d);
-    } else {
-      // Open passage. Render forward decorations (door, shrine, chest).
-      if (tile === TILES.DOOR) drawDoorAtDepth(VIEW_FRAMES[d - 1], VIEW_FRAMES[d]);
-      // Static interactables visible ahead.
-      const fx = findInteractable(tx, ty);
-      if (fx) visibleProps.push({ d, fx, tile });
+  // For each depth slice, paint far-to-near so closer panels overwrite
+  // farther ones. Front blocked tiles end the corridor at that depth;
+  // until then the renderer also paints side walls (immediate corridor
+  // edge and one tile further out, when the immediate edge is open).
+  let blockedAt = MAX_DEPTH + 1;
+  // First scan to find where the corridor is blocked along the forward axis.
+  for (let d = 1; d <= MAX_DEPTH; d++) {
+    const tx = state.player.x + dirVec[0] * d;
+    const ty = state.player.y + dirVec[1] * d;
+    if (!inBounds(tx, ty) || isViewBlocking(tileAt(tx, ty))) {
+      blockedAt = d;
+      break;
     }
   }
 
-  // Draw forward props (back-to-front is already by depth ordering: we want larger=closer drawn on top).
+  // Build a flat list of panel paints, sorted by depth descending so far
+  // panels paint first. Cap the loop at the deepest visible depth.
+  const panels = [];
+  const farthest = Math.min(blockedAt, MAX_DEPTH);
+  for (let d = farthest; d >= 1; d--) {
+    const tx = state.player.x + dirVec[0] * d;
+    const ty = state.player.y + dirVec[1] * d;
+    if (!inBounds(tx, ty)) continue;
+    const tile = tileAt(tx, ty);
+
+    // Far-side walls: side+1 is open but side+2 is blocking — paint the
+    // backing wall through the open gap.
+    for (const sgn of [-1, 1]) {
+      const s1x = tx + sgn * lvec[0], s1y = ty + sgn * lvec[1];
+      const s1 = tileAt(s1x, s1y);
+      if (s1 != null && !isViewBlocking(s1)) {
+        const s2x = s1x + sgn * lvec[0], s2y = s1y + sgn * lvec[1];
+        const s2 = tileAt(s2x, s2y);
+        if (isViewBlocking(s2)) {
+          panels.push({
+            kind: "far_side", d, side: sgn === -1 ? "left" : "right",
+            tile: s2,
+          });
+        }
+        // Side props at offset ±1 (chests, NPCs, etc.)
+        const sfx = findInteractable(s1x, s1y);
+        if (sfx) visibleProps.push({ d, side: sgn, fx: sfx, tile: s1 });
+      }
+    }
+
+    // Immediate side walls (edge of corridor).
+    const ltx = tx + lvec[0], lty = ty + lvec[1];
+    const ltile = tileAt(ltx, lty);
+    if (isViewBlocking(ltile)) panels.push({ kind: "side", d, side: "left", tile: ltile });
+    const rtx = tx - lvec[0], rty = ty - lvec[1];
+    const rtile = tileAt(rtx, rty);
+    if (isViewBlocking(rtile)) panels.push({ kind: "side", d, side: "right", tile: rtile });
+
+    if (isViewBlocking(tile)) {
+      panels.push({ kind: "front", d, tile });
+    } else {
+      if (tile === TILES.DOOR) panels.push({ kind: "door", d });
+      const fx = findInteractable(tx, ty);
+      if (fx) visibleProps.push({ d, side: 0, fx, tile });
+    }
+  }
+
+  // Apply step-shift: when stepShift > 0, blend frames toward the next
+  // depth so the world appears to slide forward.
+  function frameAt(d) {
+    const idx = Math.min(MAX_DEPTH, Math.max(0, d));
+    if (stepShift <= 0) return VIEW_FRAMES[idx];
+    const a = VIEW_FRAMES[idx];
+    const b = VIEW_FRAMES[Math.max(0, idx - 1)];
+    if (!b) return a;
+    const t = stepShift;
+    return {
+      x0: a.x0 + (b.x0 - a.x0) * t,
+      y0: a.y0 + (b.y0 - a.y0) * t,
+      x1: a.x1 + (b.x1 - a.x1) * t,
+      y1: a.y1 + (b.y1 - a.y1) * t,
+    };
+  }
+
+  panels.sort((a, b) => b.d - a.d);
+  for (const p of panels) {
+    if (p.kind === "front") drawFrontWall(frameAt(p.d), p.tile, p.d);
+    else if (p.kind === "side") drawSideWall(frameAt(p.d - 1), frameAt(p.d), p.side, p.tile, p.d);
+    else if (p.kind === "far_side") drawSideWall(frameAt(p.d), frameAt(p.d + 1), p.side, p.tile, p.d + 1);
+    else if (p.kind === "door") drawDoorAtDepth(frameAt(p.d - 1), frameAt(p.d));
+  }
+
+  // Draw forward props (back-to-front: deeper props first).
   visibleProps.sort((a, b) => b.d - a.d);
-  for (const p of visibleProps) drawForwardProp(p);
+  for (const p of visibleProps) drawForwardProp(p, frameAt);
 
   // Vignette + lighting darken corners.
   const grd = ctx.createRadialGradient(160, 120, 60, 160, 120, 200);
@@ -2328,10 +2435,18 @@ function drawDoorAtDepth(near, far) {
   ctx.fillRect(cx + w / 2 - 3, (far.y0 + far.y1) / 2, 1, 2);
 }
 
-function drawForwardProp({ d, fx, tile }) {
-  const frame = VIEW_FRAMES[d - 1];
-  const next = VIEW_FRAMES[d];
-  const cx = (frame.x0 + frame.x1) / 2;
+function drawForwardProp({ d, side = 0, fx, tile }, frameAt = (i) => VIEW_FRAMES[i]) {
+  const frame = frameAt(d - 1);
+  const next = frameAt(d);
+  // Side-offset props sit between the corridor edge and the canvas edge.
+  let cx;
+  if (side === 0) {
+    cx = (frame.x0 + frame.x1) / 2;
+  } else if (side < 0) {
+    cx = (frame.x0 + next.x0) / 2;
+  } else {
+    cx = (frame.x1 + next.x1) / 2;
+  }
   const baseY = (frame.y1 + next.y1) / 2;
   const size = (frame.y1 - next.y1) * 0.9;
   if (fx.kind === "shrine") {
