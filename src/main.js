@@ -2038,13 +2038,96 @@ function isViewBlocking(id) {
 // Frames define the inset rectangle of the corridor at each depth, with
 // frames[0] = full canvas and successive frames shrinking toward the
 // vanishing point.
+// [zenith, mid sky, horizon] — the renderer fades zenith→horizon. Indoor
+// regions only use the second entry as a flat ceiling tint.
 const REGION_SKY = {
-  bridge:    ["#04060e", "#1a2050"],
-  courtyard: ["#05070e", "#15192a"],
-  interior:  ["#0a0608", "#241612"],
-  grove:     ["#04080a", "#10241a"],
-  cavern:    ["#08040c", "#241430"],
+  bridge:    ["#070b1c", "#162042", "#3a4878"],
+  courtyard: ["#080b18", "#161e2e", "#384258"],
+  interior:  ["#1a0e0a", "#3a2618", "#5a3a22"],
+  grove:     ["#0c1612", "#1a2c20", "#2e4838"],
+  cavern:    ["#100a18", "#28183a", "#3a2050"],
 };
+const OUTDOOR_REGIONS = new Set(["bridge", "courtyard", "grove"]);
+
+// Stable star field reused across frames (tiny hand-tuned positions).
+const SKY_STARS = (() => {
+  const stars = [];
+  for (let i = 0; i < 70; i++) {
+    stars.push({
+      x: (i * 37 + (i * i * 13) % 17) % VIEW_W,
+      y: (i * 11 + (i * i * 7) % 23) % 90,
+      a: 0.35 + ((i * 7) % 7) * 0.07,
+      tw: ((i * 113) % 100) / 100 * Math.PI * 2,
+    });
+  }
+  return stars;
+})();
+
+function drawCeilingBackdrop() {
+  const region = combatRegion();
+  const pal = REGION_SKY[region] || REGION_SKY.courtyard;
+  if (OUTDOOR_REGIONS.has(region)) drawSkyOutdoor(pal);
+  else drawCeilingIndoor(pal);
+}
+
+function drawSkyOutdoor(pal) {
+  const grad = ctx.createLinearGradient(0, 0, 0, VIEW_H / 2);
+  grad.addColorStop(0, pal[0]);
+  grad.addColorStop(0.55, pal[1]);
+  grad.addColorStop(1, pal[2]);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H / 2);
+
+  // Twinkling stars in the upper sky.
+  for (const s of SKY_STARS) {
+    const tw = (Math.sin(animTime / 700 + s.tw) + 1) / 2;
+    const a = s.a * (0.45 + 0.55 * tw);
+    ctx.fillStyle = `rgba(220,225,240,${a.toFixed(3)})`;
+    ctx.fillRect(s.x | 0, s.y | 0, 1, 1);
+  }
+  // Horizon glow band right at the meeting line of sky and ground.
+  const glow = ctx.createLinearGradient(0, VIEW_H / 2 - 12, 0, VIEW_H / 2);
+  glow.addColorStop(0, "rgba(255,210,150,0)");
+  glow.addColorStop(1, "rgba(255,200,140,0.18)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, VIEW_H / 2 - 12, VIEW_W, 12);
+  // Crisp horizon line.
+  ctx.fillStyle = "rgba(255,210,150,0.18)";
+  ctx.fillRect(0, VIEW_H / 2 - 1, VIEW_W, 1);
+}
+
+function drawCeilingIndoor(pal) {
+  const grad = ctx.createLinearGradient(0, 0, 0, VIEW_H / 2);
+  grad.addColorStop(0, pal[0]);
+  grad.addColorStop(1, pal[1]);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H / 2);
+
+  // Mirror the floor's vanishing-point grid for the vaulted ceiling.
+  const cy = VIEW_H / 2;
+  ctx.strokeStyle = "rgba(0,0,0,0.5)";
+  ctx.lineWidth = 1;
+  const baseRows = 8;
+  for (let i = 1; i <= baseRows; i++) {
+    const t = i / baseRows;
+    const k = 1 / (1 - t * 0.92);
+    const y = cy - cy * (k - 1) / (1 / 0.08 - 1);
+    if (y < 0) break;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(VIEW_W, y); ctx.stroke();
+  }
+  // Vanishing radial beams (rafters / cavern fissures).
+  ctx.strokeStyle = "rgba(0,0,0,0.4)";
+  for (let i = 0; i <= 12; i++) {
+    const x = i * (VIEW_W / 12);
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(VIEW_W / 2, cy);
+    ctx.stroke();
+  }
+  // Subtle glow at the ceiling boundary so floor and ceiling do not blur.
+  ctx.fillStyle = "rgba(255,210,150,0.06)";
+  ctx.fillRect(0, cy - 2, VIEW_W, 2);
+}
 
 // Per-region floor palette: [near base, far base, accent].
 const REGION_FLOOR = {
@@ -2135,13 +2218,10 @@ function render3D() {
   ctx.save();
   ctx.translate(shakeX, shakeY);
 
-  // Sky / ceiling tinted by the region the player stands in.
-  const skyTone = REGION_SKY[combatRegion()] || REGION_SKY.courtyard;
-  const ceil = ctx.createLinearGradient(0, 0, 0, VIEW_H / 2);
-  ceil.addColorStop(0, skyTone[0]);
-  ceil.addColorStop(1, skyTone[1]);
-  ctx.fillStyle = ceil;
-  ctx.fillRect(0, 0, VIEW_W, VIEW_H / 2);
+  // Sky / ceiling drawn region-aware: outdoors gets a twilight sky with
+  // stars and a horizon glow, indoors gets a stone vault that mirrors
+  // the floor's vanishing-point grid.
+  drawCeilingBackdrop();
 
   // Floor (perspective shading toward vanishing point).
   drawFloorBackdrop();
@@ -2264,10 +2344,10 @@ function render3D() {
   visibleProps.sort((a, b) => b.d - a.d);
   for (const p of visibleProps) drawForwardProp(p, frameAt);
 
-  // Vignette + lighting darken corners.
-  const grd = ctx.createRadialGradient(160, 120, 60, 160, 120, 200);
+  // Soft corner vignette — kept light so the sky and stars remain legible.
+  const grd = ctx.createRadialGradient(160, 120, 90, 160, 120, 220);
   grd.addColorStop(0, "rgba(0,0,0,0)");
-  grd.addColorStop(1, "rgba(0,0,0,0.7)");
+  grd.addColorStop(1, "rgba(0,0,0,0.45)");
   ctx.fillStyle = grd;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
